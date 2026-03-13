@@ -32,6 +32,11 @@ cargo run -- -p "quicksort" -l rust --save -o sort.rs
 # Copy to clipboard
 cargo run -- -p "utility function" --copy
 
+# Use stdin as context (pipe data in, smartcat-style)
+git diff | apple-code -p "summarize the changes"
+git diff | apple-code -p "summarize the changes" > summary.txt
+cat src/main.rs | apple-code -p "add doc comments to this code"
+
 # Edit existing file (send file content + prompt to model, write result back)
 cargo run -- -p "add error handling" -e src/main.rs
 
@@ -58,6 +63,7 @@ cargo run -- test
 - **Clipboard** – `--copy` (arboard)
 - **Syntax highlighting** – syntect in preview and REPL when language is set
 - **Multi-language** – 20+ languages and aliases; `languages` subcommand; validation of `--language`
+- **Stdin piping** – When stdin is not a TTY (e.g. `git diff | apple-code -p "…"`) the piped content is used as additional context for the prompt
 - **Signals** – Ctrl+C handled with “Operation cancelled”
 
 ## Development plan
@@ -67,4 +73,5 @@ A step-by-step development plan (phases 1–8) is in [docs/DEVELOPMENT_PLAN.md](
 ## License
 
 MIT
+
 # apple-code

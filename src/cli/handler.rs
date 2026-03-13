@@ -97,21 +97,29 @@ impl Handler {
             };
             (request, Some(path.to_path_buf()))
         } else {
-            let context = if !std::io::stdin().is_terminal() {
-                let mut stdin_content = String::new();
-                if std::io::stdin().read_to_string(&mut stdin_content).is_ok() && !stdin_content.is_empty() {
-                    Some(match &args.context {
-                        Some(c) => format!("{}\n\n{}", stdin_content.trim_end(), c),
-                        None => stdin_content,
-                    })
-                } else {
-                    args.context.clone()
-                }
+            // When stdin is piped (not a TTY), read it and append it directly
+            // to the prompt so the model clearly sees the input (smartcat-style).
+            let mut piped_input = String::new();
+            let has_piped_input = if !std::io::stdin().is_terminal() {
+                std::io::stdin()
+                    .read_to_string(&mut piped_input)
+                    .is_ok()
+                    && !piped_input.is_empty()
             } else {
-                args.context.clone()
+                false
             };
+
+            let mut prompt = args.prompt.as_ref().unwrap().clone();
+            if has_piped_input {
+                prompt.push_str("\n\n");
+                prompt.push_str(piped_input.trim_end());
+            }
+
+            // Keep explicit --context only for additional hints; stdin lives in the prompt.
+            let context = args.context.clone();
+
             let request = GenerateRequest {
-                prompt: args.prompt.as_ref().unwrap().clone(),
+                prompt,
                 language: language.clone(),
                 temperature: args.temperature,
                 max_tokens: args.max_tokens,
