@@ -10,6 +10,18 @@ Inspired by [Apple-AI-CLI](https://github.com/0xatrilla/Apple-AI-CLI).
 - **macOS 15+** with Apple Intelligence support (for future integration)
 - **Apple Silicon Mac** recommended
 
+## Installation
+
+```bash
+cargo install apple-code-assistant
+```
+
+Then use the `apple-code` binary:
+
+```bash
+apple-code --help
+```
+
 ## Build and run
 
 ```bash
@@ -17,7 +29,20 @@ cargo build
 cargo run -- --help
 ```
 
-### Examples
+### Quick start
+
+```bash
+# Simple generation
+apple-code -p "hello world in Python" -l python --tool-mode
+
+# Summarize a diff (smartcat-style)
+git diff | apple-code -p "summarize the changes" --tool-mode --char-limit 8000
+
+# Use a template for tests
+apple-code -p "write tests for this function" -T tests --tool-mode
+```
+
+### Examples (from source checkout)
 
 ```bash
 # Interactive mode (REPL with logo, /help, /exit, /history, /sessions)

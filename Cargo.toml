@@ -5,6 +5,12 @@ edition = "2021"
 description = "Apple Code Assistant - Professional CLI tool powered by Apple Intelligence for on-device code generation"
 authors = ["Apple Code Assistant"]
 license = "MIT"
+repository = "https://github.com/bbrangeo/apple-code"
+homepage = "https://github.com/bbrangeo/apple-code"
+documentation = "https://docs.rs/apple-code-assistant"
+readme = "README.md"
+keywords = ["cli", "ai", "apple-intelligence", "codegen"]
+categories = ["command-line-utilities", "development-tools"]
 
 [[bin]]
 name = "apple-code"
@@ -31,6 +37,20 @@ tokio = { version = "1", features = ["rt", "macros"], optional = true }
 apple_ai = { version = "0.1", optional = true }
 glob = "0.3"
 
+[package.metadata]
+# Files that should not be included in the published crate
+exclude = [
+    ".env",
+    "env copy.example",
+    "config.toml",
+    ".apple-code-history",
+    ".cursor*",
+    "terminals",
+]
+
 [features]
 default = ["apple_ai"]
 apple_ai = ["dep:apple_ai", "dep:tokio"]
+
+[badges]
+maintenance = { status = "experimental" }
