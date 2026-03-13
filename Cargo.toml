@@ -1,0 +1,35 @@
+[package]
+name = "apple-code-assistant"
+version = "0.1.0"
+edition = "2021"
+description = "Apple Code Assistant - Professional CLI tool powered by Apple Intelligence for on-device code generation"
+authors = ["Apple Code Assistant"]
+license = "MIT"
+
+[[bin]]
+name = "apple-code"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+dotenvy = "0.15"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+thiserror = "1"
+env_logger = "0.11"
+log = "0.4"
+dirs = "5"
+owo-colors = "4"
+rustyline = "15"
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+arboard = "3"
+syntect = "5"
+ctrlc = "3"
+tokio = { version = "1", features = ["rt", "macros"], optional = true }
+apple_ai = { version = "0.1", optional = true }
+
+[features]
+default = ["apple_ai"]
+apple_ai = ["dep:apple_ai", "dep:tokio"]

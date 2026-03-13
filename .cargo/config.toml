@@ -1,0 +1,3 @@
+# Use project-local target directory so the binary is always at ./target/release/apple-code
+[build]
+target-dir = "target"
