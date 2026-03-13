@@ -10,7 +10,10 @@ use crate::types::{GenerateRequest, GenerateResponse};
 /// Client for code generation (Apple Foundation or mock).
 pub trait CodeGenClient: Send + Sync {
     /// Generate code from the given request.
-    fn generate(&self, request: &GenerateRequest) -> Result<GenerateResponse, crate::error::ApiError>;
+    fn generate(
+        &self,
+        request: &GenerateRequest,
+    ) -> Result<GenerateResponse, crate::error::ApiError>;
 }
 
 /// Create the default client (Apple AI when available, otherwise mock).
@@ -22,7 +25,10 @@ pub fn default_client() -> Box<dyn CodeGenClient> {
             Box::new(client)
         }
         Err(e) => {
-            log::warn!("Apple AI client unavailable: {}. Falling back to mock client.", e);
+            log::warn!(
+                "Apple AI client unavailable: {}. Falling back to mock client.",
+                e
+            );
             Box::new(mock::MockClient::new())
         }
     }
@@ -33,4 +39,3 @@ pub fn default_client() -> Box<dyn CodeGenClient> {
     log::info!("Apple AI feature disabled. Using mock client.");
     Box::new(mock::MockClient::new())
 }
-

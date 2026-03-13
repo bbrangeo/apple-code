@@ -228,27 +228,32 @@ impl Handler {
             (request, None)
         };
         let response = client.generate(&request).map_err(|e| anyhow::anyhow!("{}", e))?;
+        let code = if request.tool_mode {
+            strip_markdown_code_block(&response.code)
+        } else {
+            response.code.clone()
+        };
         let theme = ui::Theme::from_str(&args.theme);
         let did_edit = edit_path.is_some();
         if let Some(ref path) = edit_path {
-            utils::write_file(path, &response.code).map_err(|e| anyhow::anyhow!("{}", e))?;
+            utils::write_file(path, &code).map_err(|e| anyhow::anyhow!("{}", e))?;
             println!("Wrote {}", path.display());
         }
         if let Some(ref out_path) = args.output {
-            utils::write_file(Path::new(out_path), &response.code).map_err(|e| anyhow::anyhow!("{}", e))?;
+            utils::write_file(Path::new(out_path), &code).map_err(|e| anyhow::anyhow!("{}", e))?;
             println!("Wrote {}", out_path);
         }
         if args.copy {
-            utils::copy_to_clipboard(&response.code).map_err(|e| anyhow::anyhow!("Clipboard: {}", e))?;
+            utils::copy_to_clipboard(&code).map_err(|e| anyhow::anyhow!("Clipboard: {}", e))?;
             println!("Copied to clipboard.");
         }
         if let Some(manager) = conversation_manager.as_mut() {
-            let _ = manager.add_assistant_message(&response.code);
+            let _ = manager.add_assistant_message(&code);
         }
         if args.preview || (args.output.is_none() && !did_edit) {
             if args.tool_mode {
                 // In tool mode, emit plain output suitable for piping/editor integration.
-                print!("{}", response.code);
+                print!("{}", code);
             } else {
                 if args.repeat_input && !std::io::stdin().is_terminal() {
                     // Repeat piped input followed by the model output, smartcat-style.
@@ -259,7 +264,7 @@ impl Handler {
                     println!();
                 }
                 ui::print_code_preview(
-                    &response.code,
+                    &code,
                     response.language.as_deref(),
                     theme,
                 );
@@ -333,6 +338,38 @@ fn read_context_globs(patterns: &[String]) -> Option<String> {
     } else {
         Some(chunks.join("\n\n"))
     }
+}
+
+fn strip_markdown_code_block(s: &str) -> String {
+    // Find the first occurrence of triple backticks.
+    let start_idx = match s.find("```") {
+        Some(idx) => idx,
+        None => return s.to_string(),
+    };
+
+    // Find the end of the opening fence line (to skip optional language tag).
+    let after_fence = start_idx + 3;
+    let rest = &s[after_fence..];
+    let line_end_rel = match rest.find('\n') {
+        Some(rel) => rel,
+        None => return s.to_string(),
+    };
+    let content_start = after_fence + line_end_rel + 1;
+
+    // Search for the closing fence from content_start.
+    let rest_after = &s[content_start..];
+    let end_rel = match rest_after.find("```") {
+        Some(rel) => rel,
+        None => return s.to_string(),
+    };
+    let content_end = content_start + end_rel;
+
+    let mut block = s[content_start..content_end].to_string();
+    // Trim leading and trailing whitespace/newlines.
+    if block.starts_with('\n') {
+        block = block[1..].to_string();
+    }
+    block.trim_end().to_string()
 }
 
 impl Default for Handler {

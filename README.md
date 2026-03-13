@@ -42,6 +42,29 @@ git diff | apple-code -p "summarize the changes" --tool-mode --char-limit 8000
 apple-code -p "write tests for this function" -T tests --tool-mode
 ```
 
+### Getting plain code only (no markdown)
+
+By default, some models may still wrap code in ``` fences and add explanations.
+To force plain code output suitable for files and editors:
+
+```bash
+# Only code written to the file (no markdown, no explanation)
+apple-code -p "implement binary search" -l python --save -o binary_search.py --tool-mode
+```
+
+You can further tighten behavior with a prompt template in `config.toml`, for example:
+
+```toml
+[prompts.strict_code]
+system = "Never use markdown or explanations. Return only the final code."
+```
+
+Then call:
+
+```bash
+apple-code -p "implement binary search" -l python -T strict_code --save -o binary_search.py --tool-mode
+```
+
 ### Examples (from source checkout)
 
 ```bash
