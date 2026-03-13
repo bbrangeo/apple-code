@@ -27,6 +27,9 @@ impl CodeGenClient for AppleAiCodeGenClient {
         let mut messages = Vec::new();
 
         let mut system_parts = vec!["You are a code generator. Output only code, no explanation.".to_string()];
+        if request.tool_mode {
+            system_parts.push("Act strictly as a CLI tool: do not use markdown, headings, or explanations. Return only the requested text.".to_string());
+        }
         if let Some(lang) = request.language.as_ref() {
             system_parts.push(format!("Language: {}", lang));
         }

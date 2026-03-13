@@ -37,6 +37,20 @@ git diff | apple-code -p "summarize the changes"
 git diff | apple-code -p "summarize the changes" > summary.txt
 cat src/main.rs | apple-code -p "add doc comments to this code"
 
+# Use prompt templates from config.toml
+apple-code -p "write tests for this function" -T tests
+apple-code -p "refactor this module" -T refactor -l rust
+
+# Extend previous conversation in non-interactive mode
+apple-code -p "summarize the architecture of this project" --extend-conversation
+apple-code -p "now propose improvements" --extend-conversation
+
+# Repeat input before output (useful in editors)
+git diff | apple-code -p "apply these changes but fix formatting" --repeat-input --tool-mode
+
+# Limit size of piped/context data and add globbed context files
+git diff | apple-code -p "summarize the changes" --char-limit 8000 --context-glob "src/**/*.rs"
+
 # Edit existing file (send file content + prompt to model, write result back)
 cargo run -- -p "add error handling" -e src/main.rs
 
@@ -63,7 +77,11 @@ cargo run -- test
 - **Clipboard** – `--copy` (arboard)
 - **Syntax highlighting** – syntect in preview and REPL when language is set
 - **Multi-language** – 20+ languages and aliases; `languages` subcommand; validation of `--language`
-- **Stdin piping** – When stdin is not a TTY (e.g. `git diff | apple-code -p "…"`) the piped content is used as additional context for the prompt
+- **Stdin piping** – When stdin is not a TTY (e.g. `git diff | apple-code -p "…"`) the piped content is appended to the prompt (smartcat-style)
+- **Prompt templates** – Templates configurables dans `config.toml`, sélectionnés via `--template/-T`
+- **CLI conversations** – `--extend-conversation` pour réutiliser la dernière session, `--repeat-input` pour rejouer l’entrée avant la sortie
+- **Context control** – `--char-limit` pour borner la taille de stdin/contexte, `--context-glob` pour ajouter des fichiers de contexte par glob
+- **Tool mode** – `--tool-mode` pour une sortie brute adaptée aux éditeurs (aucun cadre ni mise en forme)
 - **Signals** – Ctrl+C handled with “Operation cancelled”
 
 ## Development plan

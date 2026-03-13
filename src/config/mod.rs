@@ -1,12 +1,28 @@
 //! Configuration loading (env + config file)
 
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+
 use serde::{Deserialize, Serialize};
 
 use crate::error::ConfigError;
-use std::path::{Path, PathBuf};
 
 const CONFIG_DIR_NAME: &str = "apple-code-assistant";
 const CONFIG_FILE_NAME: &str = "config.toml";
+
+/// Prompt template configuration (inspired by smartcat's prompts.toml).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptConfig {
+    /// Optional override for the model.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Optional override for temperature.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
+    /// Optional system prompt snippet to prepend to the default system behavior.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system: Option<String>,
+}
 
 /// Application configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -21,6 +37,12 @@ pub struct Config {
     pub max_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
+    /// Name of the default prompt template (if any).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_prompt: Option<String>,
+    /// Prompt templates loaded from config file.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompts: Option<HashMap<String, PromptConfig>>,
     #[serde(skip)]
     pub config_file: Option<PathBuf>,
 }
@@ -33,6 +55,8 @@ impl Default for Config {
             theme: Some("dark".to_string()),
             max_tokens: Some(4000),
             temperature: Some(0.7),
+            default_prompt: None,
+            prompts: None,
             config_file: None,
         }
     }
@@ -82,6 +106,13 @@ impl Config {
         if f.temperature.is_some() {
             self.temperature = f.temperature;
         }
+        if f.default_prompt.is_some() {
+            self.default_prompt = f.default_prompt;
+        }
+        if let Some(prompts) = f.prompts {
+            // Simple overwrite for now; could be merged per key later if needed.
+            self.prompts = Some(prompts);
+        }
     }
 
     fn merge_env(&mut self) {
@@ -127,6 +158,8 @@ impl Config {
             theme: self.theme.clone(),
             max_tokens: self.max_tokens,
             temperature: self.temperature,
+            default_prompt: self.default_prompt.clone(),
+            prompts: self.prompts.clone(),
         };
         let toml = toml::to_string_pretty(&file).map_err(|e| ConfigError::Invalid(e.to_string()))?;
         std::fs::write(&path, toml).map_err(ConfigError::Io)?;
@@ -175,4 +208,25 @@ struct ConfigFile {
     theme: Option<String>,
     max_tokens: Option<u32>,
     temperature: Option<f32>,
+     /// Optional default prompt template name.
+    default_prompt: Option<String>,
+    /// Optional map of prompt templates.
+    prompts: Option<HashMap<String, PromptConfig>>,
+}
+
+impl Config {
+    /// Resolve a prompt template either by explicit name or by using default_prompt.
+    pub fn resolve_prompt<'a>(&'a self, name: Option<&str>) -> Option<(&'a str, &'a PromptConfig)> {
+        let prompts = self.prompts.as_ref()?;
+        let key = if let Some(name) = name {
+            name
+        } else if let Some(default) = self.default_prompt.as_deref() {
+            default
+        } else {
+            return None;
+        };
+        prompts
+            .get_key_value(key)
+            .map(|(k, v)| (k.as_str(), v))
+    }
 }

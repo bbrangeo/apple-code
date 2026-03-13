@@ -47,13 +47,33 @@ pub fn run(theme: Theme, config: &Config) -> Result<()> {
                     manager.create_session();
                 }
                 let _ = manager.add_user_message(line);
+
+                // Build conversational context from current session history (excluding the
+                // just-entered line, which is already in `prompt`).
+                let history = manager.history();
+                let mut context = String::new();
+                if !history.is_empty() {
+                    for msg in history {
+                        let role = match msg.role {
+                            crate::conversation::Role::User => "user",
+                            crate::conversation::Role::Assistant => "assistant",
+                        };
+                        context.push_str("[");
+                        context.push_str(role);
+                        context.push_str("] ");
+                        context.push_str(&msg.content);
+                        context.push('\n');
+                    }
+                }
+
                 let request = GenerateRequest {
                     prompt: line.to_string(),
                     language: config.default_language.clone(),
                     temperature: config.temperature.unwrap_or(0.7),
                     max_tokens: config.max_tokens.unwrap_or(4000),
                     model: config.model.clone(),
-                    context: None,
+                    context: if context.is_empty() { None } else { Some(context) },
+                    tool_mode: false,
                 };
                 match client.generate(&request) {
                     Ok(response) => {

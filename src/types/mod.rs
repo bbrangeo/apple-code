@@ -1,6 +1,7 @@
 //! Shared types for CLI args, requests, and responses
 
 /// Code generation request (prompt + options).
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct GenerateRequest {
     pub prompt: String,
@@ -9,6 +10,8 @@ pub struct GenerateRequest {
     pub max_tokens: u32,
     pub model: Option<String>,
     pub context: Option<String>,
+    /// When true, behave as a raw CLI tool (no markdown/explanations).
+    pub tool_mode: bool,
 }
 
 /// Code generation response (generated code).
@@ -19,5 +22,6 @@ pub struct GenerateResponse {
 }
 
 /// Placeholder for conversation message (session/streaming).
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct ConversationMessage;

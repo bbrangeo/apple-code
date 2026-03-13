@@ -7,6 +7,7 @@ use anyhow::Result;
 
 use crate::api::{self, CodeGenClient};
 use crate::config::Config;
+use crate::conversation::ConversationManager;
 use crate::error::ConfigError;
 use crate::types::GenerateRequest;
 use crate::ui;
@@ -56,6 +57,7 @@ impl Handler {
                         max_tokens: 10,
                         model: None,
                         context: None,
+                        tool_mode: false,
                     };
                     match client.generate(&req) {
                         Ok(_) => println!("API test: OK"),
@@ -82,18 +84,65 @@ impl Handler {
             .as_ref()
             .and_then(|l| normalize(l).or(Some(l.clone())))
             .or_else(|| config.default_language.clone());
+
+        // Conversation manager for non-interactive CLI when extending conversations.
+        let mut conversation_manager = if args.extend_conversation {
+            let mut m = ConversationManager::new();
+            // Try to load the most recent session if any.
+            if let Ok(ids) = m.list_sessions() {
+                if let Some(last) = ids.last() {
+                    let _ = m.load_session(last);
+                }
+            }
+            if m.current_session().is_none() {
+                m.create_session();
+            }
+            Some(m)
+        } else {
+            None
+        };
+
+        // Apply prompt template from config if requested or if a default_prompt is configured.
+        let prompt_template = config.resolve_prompt(args.template.as_deref());
+        let effective_model = args
+            .model
+            .clone()
+            .or_else(|| prompt_template.and_then(|(_, p)| p.model.clone()))
+            .or_else(|| config.model.clone());
+        let effective_temperature = prompt_template
+            .and_then(|(_, p)| p.temperature)
+            .unwrap_or(args.temperature);
+
         let client = api::default_client();
         let (request, edit_path) = if let Some(ref edit_file) = args.edit {
             let path = Path::new(edit_file);
             let content = utils::read_file(path).map_err(|e| anyhow::anyhow!("{}", e))?;
-            let context = args.context.as_deref().map_or(content.clone(), |c| format!("{}\n\nFile content:\n{}", c, content));
+
+            // Build context: main edited file content + optional explicit context + globbed files.
+            let mut context_parts: Vec<String> = Vec::new();
+            context_parts.push(format!("File content ({}):\n{}", path.display(), content));
+            if let Some(c) = args.context.as_deref() {
+                context_parts.push(c.to_string());
+            }
+            if !args.context_glob.is_empty() {
+                if let Some(glob_ctx) = read_context_globs(&args.context_glob) {
+                    context_parts.push(glob_ctx);
+                }
+            }
+            let mut context = context_parts.join("\n\n");
+            if let Some(limit) = args.char_limit {
+                if context.len() > limit as usize {
+                    context.truncate(limit as usize);
+                }
+            }
             let request = GenerateRequest {
                 prompt: args.prompt.as_ref().unwrap().clone(),
                 language: language.clone(),
-                temperature: args.temperature,
+                temperature: effective_temperature,
                 max_tokens: args.max_tokens,
-                model: args.model.clone().or_else(|| config.model.clone()),
+                model: effective_model.clone(),
                 context: Some(context),
+                tool_mode: args.tool_mode,
             };
             (request, Some(path.to_path_buf()))
         } else {
@@ -111,20 +160,70 @@ impl Handler {
 
             let mut prompt = args.prompt.as_ref().unwrap().clone();
             if has_piped_input {
+                if let Some(limit) = args.char_limit {
+                    if piped_input.len() > limit as usize {
+                        piped_input.truncate(limit as usize);
+                    }
+                }
                 prompt.push_str("\n\n");
                 prompt.push_str(piped_input.trim_end());
             }
 
-            // Keep explicit --context only for additional hints; stdin lives in the prompt.
-            let context = args.context.clone();
+            // Start with any explicit --context value.
+            let mut context_parts: Vec<String> = Vec::new();
+            if let Some(ctx) = args.context.clone() {
+                context_parts.push(ctx);
+            }
+
+            // Add glob-based context files, if any.
+            if !args.context_glob.is_empty() {
+                if let Some(glob_ctx) = read_context_globs(&args.context_glob) {
+                    context_parts.push(glob_ctx);
+                }
+            }
+
+            // If we are extending a conversation, add its history as context and
+            // persist the new turn.
+            if let Some(manager) = conversation_manager.as_mut() {
+                let _ = manager.add_user_message(&prompt);
+                let history = manager.history();
+                if !history.is_empty() {
+                    let mut history_ctx = String::new();
+                    for msg in history {
+                        let role = match msg.role {
+                            crate::conversation::Role::User => "user",
+                            crate::conversation::Role::Assistant => "assistant",
+                        };
+                        history_ctx.push_str("[");
+                        history_ctx.push_str(role);
+                        history_ctx.push_str("] ");
+                        history_ctx.push_str(&msg.content);
+                        history_ctx.push('\n');
+                    }
+                    context_parts.push(history_ctx);
+                }
+            }
+
+            let context = if context_parts.is_empty() {
+                None
+            } else {
+                let mut ctx = context_parts.join("\n\n");
+                if let Some(limit) = args.char_limit {
+                    if ctx.len() > limit as usize {
+                        ctx.truncate(limit as usize);
+                    }
+                }
+                Some(ctx)
+            };
 
             let request = GenerateRequest {
                 prompt,
                 language: language.clone(),
-                temperature: args.temperature,
+                temperature: effective_temperature,
                 max_tokens: args.max_tokens,
-                model: args.model.clone().or_else(|| config.model.clone()),
+                model: effective_model,
                 context,
+                tool_mode: args.tool_mode,
             };
             (request, None)
         };
@@ -143,12 +242,28 @@ impl Handler {
             utils::copy_to_clipboard(&response.code).map_err(|e| anyhow::anyhow!("Clipboard: {}", e))?;
             println!("Copied to clipboard.");
         }
+        if let Some(manager) = conversation_manager.as_mut() {
+            let _ = manager.add_assistant_message(&response.code);
+        }
         if args.preview || (args.output.is_none() && !did_edit) {
-            ui::print_code_preview(
-                &response.code,
-                response.language.as_deref(),
-                theme,
-            );
+            if args.tool_mode {
+                // In tool mode, emit plain output suitable for piping/editor integration.
+                print!("{}", response.code);
+            } else {
+                if args.repeat_input && !std::io::stdin().is_terminal() {
+                    // Repeat piped input followed by the model output, smartcat-style.
+                    // We don't have the raw stdin anymore, but the effective prompt already
+                    // contains it appended; repeating the prompt before the output keeps
+                    // the behavior close enough for editor workflows.
+                    println!("{}", args.prompt.as_deref().unwrap_or_default());
+                    println!();
+                }
+                ui::print_code_preview(
+                    &response.code,
+                    response.language.as_deref(),
+                    theme,
+                );
+            }
         }
         Ok(())
     }
@@ -197,6 +312,26 @@ impl Handler {
         }
         println!("Use --list, --get <key>, --set key=value, or --reset.");
         Ok(())
+    }
+}
+
+fn read_context_globs(patterns: &[String]) -> Option<String> {
+    let mut chunks: Vec<String> = Vec::new();
+    for pattern in patterns {
+        if let Ok(paths) = glob::glob(pattern) {
+            for entry in paths.flatten() {
+                if entry.is_file() {
+                    if let Ok(content) = std::fs::read_to_string(&entry) {
+                        chunks.push(format!("=== {} ===\n{}", entry.display(), content));
+                    }
+                }
+            }
+        }
+    }
+    if chunks.is_empty() {
+        None
+    } else {
+        Some(chunks.join("\n\n"))
     }
 }
 

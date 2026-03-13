@@ -1,0 +1,23 @@
+model = ""
+default_language = "typescript"
+theme = "dark"
+max_tokens = 4000
+temperature = 0.7
+
+default_prompt = "default"
+
+[prompts.default]
+model = ""
+temperature = 0.7
+system = "You are a code generator. Output only code, no explanation."
+
+[prompts.tests]
+model = ""
+temperature = 0.2
+system = "You are an expert test writer. Generate only tests for the given code, no explanations."
+
+[prompts.refactor]
+model = ""
+temperature = 0.5
+system = "You are an expert refactoring assistant. Return only the refactored code, no explanations."
+

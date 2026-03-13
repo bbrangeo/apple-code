@@ -30,6 +30,10 @@ pub struct Args {
     #[arg(short, long)]
     pub model: Option<String>,
 
+    /// Prompt template name (from config)
+    #[arg(short = 'T', long)]
+    pub template: Option<String>,
+
     /// Temperature for code generation (0-2)
     #[arg(short, long, default_value = "0.7")]
     pub temperature: f32,
@@ -37,6 +41,10 @@ pub struct Args {
     /// Maximum tokens to generate
     #[arg(long, default_value = "4000")]
     pub max_tokens: u32,
+
+    /// Maximum number of characters to use for piped stdin and context
+    #[arg(long)]
+    pub char_limit: Option<usize>,
 
     /// Save generated code to file
     #[arg(short, long)]
@@ -58,6 +66,10 @@ pub struct Args {
     #[arg(long)]
     pub context: Option<String>,
 
+    /// Glob patterns for additional context files
+    #[arg(long = "context-glob")]
+    pub context_glob: Vec<String>,
+
     /// Terminal theme (light/dark)
     #[arg(long, default_value = "dark")]
     pub theme: String,
@@ -73,6 +85,18 @@ pub struct Args {
     /// Debug mode
     #[arg(long)]
     pub debug: bool,
+
+    /// Extend previous conversation instead of starting a new one
+    #[arg(short = 'e', long)]
+    pub extend_conversation: bool,
+
+    /// Repeat input before output (useful for editor integration)
+    #[arg(short = 'r', long)]
+    pub repeat_input: bool,
+
+    /// Raw/tool mode: print plain output without preview formatting
+    #[arg(long)]
+    pub tool_mode: bool,
 
     #[command(subcommand)]
     pub subcommand: Option<Subcommand>,
