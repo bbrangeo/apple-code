@@ -1,6 +1,6 @@
 [package]
 name = "apple-code-assistant"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "Apple Code Assistant - Professional CLI tool powered by Apple Intelligence for on-device code generation"
 authors = ["Apple Code Assistant"]
@@ -34,7 +34,7 @@ arboard = "3"
 syntect = "5"
 ctrlc = "3"
 tokio = { version = "1", features = ["rt", "macros"], optional = true }
-apple_ai = { version = "0.1", optional = true }
+apple_ai = { version = "0.1.1", optional = true }
 glob = "0.3"
 
 [package.metadata]
