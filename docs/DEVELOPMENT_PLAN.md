@@ -1,236 +1,165 @@
 # Plan de développement – Apple Code Assistant (Rust)
 
-CLI inspirée de [Apple-AI-CLI](https://github.com/0xatrilla/Apple-AI-CLI) : génération de code via Apple Intelligence, TUI, streaming, multi-langages, gestion des conversations.
+Mis à jour le **17 novembre 2026**, pour la version **0.1.3**, publiée sur crates.io.
 
-**État actuel** : squelette compilable (parser clap, handler stub, modules `api`, `config`, `ui`, `utils`, `types`).
+CLI de génération de code sur appareil, inspirée de [Apple-AI-CLI](https://github.com/0xatrilla/Apple-AI-CLI). Le projet n'est plus un squelette : génération Apple Intelligence, REPL, fichiers, configuration et sessions sont implémentés. La fiabilité des sorties et certaines options restent à améliorer. **Le streaming n'est pas encore implémenté.**
 
----
+Les cases cochées correspondent au code livré ; les cases ouvertes sont des travaux restants, pas des fonctionnalités garanties.
 
-## Vue d’ensemble des objectifs
+## État d'ensemble
 
-| Objectif | Description |
-|----------|-------------|
-| **Apple Intelligence** | Intégration on-device des modèles Apple Foundation |
-| **TUI** | Interface terminal (ASCII art, panneaux, thème) |
-| **Conversations** | Historique et sessions persistantes |
-| **Multi-langages** | Génération pour 25+ langages (typescript, python, rust, etc.) |
-| **Fichiers** | Sauvegarde, édition, sortie vers fichier |
-| **Syntax highlighting** | Affichage du code généré (style highlight.js) |
-| **Presse-papiers** | Copie du code dans le clipboard macOS |
-| **CLI** | Parsing robuste (déjà en place avec clap) |
-| **Gestion d’erreurs** | Erreurs structurées et fallbacks propres |
+| Domaine | État en 0.1.3 |
+|---|---|
+| Backend Apple Intelligence | Génération complète via `apple_ai` 0.1.1 ; repli vers le mock si l'initialisation échoue |
+| Interface terminal | Logo, thèmes CLI, aperçu et coloration syntaxique ; pas de TUI plein écran |
+| REPL | Saisie et commandes interactives ; `-l` prioritaire sur la configuration depuis 0.1.3 |
+| Langages | 20 noms canoniques et leurs alias ; validation de `-l` en mode direct et interactif |
+| Fichiers et presse-papiers | Écriture, édition et copie disponibles ; aucune validation automatique du code généré |
+| Conversations | Sessions JSON et reprise ; sélection de la session et taille de l'historique à fiabiliser |
+| Entrées et templates | stdin, contexte explicite, globs et templates en mode direct |
+| Qualité | 11 tests avec les fonctionnalités par défaut, 10 sans Apple AI ; Clippy strict et formatage validés lors de la préparation de 0.1.3 |
+| Distribution | Version 0.1.3 publiée ; exclusions des fichiers locaux corrigées |
 
----
+## Phase 0 – Socle livré
 
-## Phase 0 – Déjà fait (skeleton)
+- [x] Projet Cargo, binaire `apple-code` et bibliothèque `apple_code_assistant`.
+- [x] Parsing `clap` et routage des sous-commandes `config`, `models`, `languages`, `test`.
+- [x] Modules `api`, `cli`, `config`, `conversation`, `types`, `ui`, `utils`.
+- [x] Suppression du code mort et mutualisation des requêtes, de la sérialisation de configuration et du rendu de l'historique.
 
-- [x] Projet Cargo, `clap` + `anyhow`
-- [x] Structure `src/{cli,api,config,ui,utils,types}`
-- [x] Parser CLI (options + sous-commandes `config`, `models`, `languages`, `test`)
-- [x] Handler stub (délégation sous-commandes / mode interactif / mode direct)
-- [x] `.gitignore`, `env.example`, README
+## Phase 1 – Configuration, logs et erreurs : socle livré
 
----
+- [x] Chargement des valeurs par défaut, du fichier TOML et des variables d'environnement ; lecture de `.env` via `dotenvy`.
+- [x] `--config` pour sélectionner explicitement un fichier ; `config --list/get/set/reset`.
+- [x] Templates TOML avec texte système, modèle et température ; erreur si un template explicitement demandé est absent en mode direct.
+- [x] Logs via `env_logger` et erreurs typées avec `thiserror`, propagées avec `anyhow` dans le CLI.
+- [x] Sérialisation directe de `Config`, exclusion du chemin local et tests de roundtrip/fusion.
+- [ ] Unifier les priorités CLI/configuration entre mode direct et REPL : thème, température, maximum de tokens et templates ne sont pas traités uniformément.
+- [ ] Valider les bornes des options numériques avant conversion vers les types du backend.
+- [ ] Propager les erreurs de lecture stdin et de persistance des sessions au lieu de les ignorer.
 
-## Phase 1 – Config, logging et erreurs
+Le fichier par défaut dépend de `dirs::config_dir()`. Sur macOS :
+`~/Library/Application Support/apple-code-assistant/config.toml`.
+Le `config.toml` du checkout n'est pas chargé automatiquement ; utiliser `--config config.toml`.
 
-**But** : configuration chargée (env + fichier), logging selon `--verbose`/`--debug`, erreurs explicites et sortie propre.
+Source : [configuration](../src/config/mod.rs).
 
-1. **Configuration**
-   - Créer `config::Config` avec champs : `model`, `default_language`, `theme`, `max_tokens`, `temperature`, `config_file`.
-   - Charger depuis `.env` (crate `dotenvy`) et/ou fichier config (ex. `~/.config/apple-code-assistant/config.toml` ou env uniquement).
-   - Utiliser `config::load()` au démarrage et passer `Config` au handler.
+## Phase 2 – Interface terminal : livrée, à fiabiliser pour les pipelines
 
-2. **Logging**
-   - Dans `utils`, initialiser un logger (ex. `env_logger` ou `tracing`) selon `args.verbose` / `args.debug` et `config`.
-   - Appeler `utils::setup_logging(verbose, debug)` dans `main` après parse.
+- [x] Logo statique et couleurs `owo-colors` ; choix CLI `--theme light|dark`.
+- [x] Aperçu du code et mode direct `--tool-mode` sans cadre de terminal.
+- [x] Nettoyage du premier bloc Markdown complet en mode outil, avec tests de compatibilité.
+- [ ] Respecter `--no-color`, les sorties non interactives et la configuration du thème.
+- [ ] Définir une séparation cohérente entre résultat sur stdout et messages de statut sur stderr, notamment avec `-o` et `--copy`.
 
-3. **Gestion d’erreurs**
-   - Introduire des types d’erreur dédiés (crate `thiserror`) : `ConfigError`, `ApiError`, `IoError`, etc.
-   - Utiliser `anyhow` en bordure (main, handler) et `Result<T, E>` typé en interne.
-   - Messages clairs et sortie propre (pas de panic en prod).
+Conserver une interface simple ; n'ajouter une TUI plein écran que pour un besoin identifié.
 
-4. **Sous-commandes `config`**
-   - Implémenter `config --list`, `--get <key>`, `--set key=value`, `--reset` (lecture/écriture du fichier config ou env).
+## Phase 3 – Apple Intelligence : backend livré, limites connues
 
-**Livrables** : config chargée, logs contrôlables, sous-commande `config` fonctionnelle, erreurs structurées.
+- [x] Client réel `AppleAiCodeGenClient` et client mock derrière `CodeGenClient`.
+- [x] Activation du backend par défaut ; mode mock avec `--no-default-features`.
+- [x] Transmission du langage, du contexte et des consignes dans le message utilisateur : les messages système sont ignorés par le chemin de génération simple de `apple_ai` 0.1.1.
+- [x] Température et maximum de tokens transmis au backend.
+- [x] Message d'erreur JSON enrichi avec une piste de réduction du contexte.
+- [ ] Corriger en amont, ou adopter une version corrigée de `apple_ai`, pour éviter le doublonnage du prompt dans le transcript et préserver les erreurs Swift réelles.
+- [ ] Définir une politique de budget d'entrée/sortie et signaler explicitement toute troncature.
+- [ ] Rendre explicite le choix réel/mock : un succès du mock ne doit pas être confondu avec une génération Apple Intelligence.
+- [ ] Implémenter réellement la sélection de modèle, ou clarifier les options `model` actuellement transportées mais non utilisées par le client Apple.
 
----
+Le modèle peut produire du code invalide ou une réponse non pertinente même avec un code de sortie nul. Réduire `--char-limit` ne permet pas de résumer intégralement un diff plus grand.
 
-## Phase 2 – Terminal UI (branding et affichage)
+Source : [client Apple AI](../src/api/apple_ai_client.rs).
 
-**But** : interface terminal soignée (ASCII art, couleurs, thème) et affichage du code en mode direct.
+## Phase 4 – REPL livré ; streaming à faire
 
-1. **ASCII art et branding**
-   - Afficher le logo “APPLE CODE” (ASCII art) au démarrage du mode interactif (et optionnellement en mode direct).
-   - Utiliser `figlet`-like en Rust (crate `figlet_rs` ou fichier art statique) et couleurs (crate `owo_colors` ou `colored`).
+- [x] REPL `rustyline`, historique de saisie local et sortie par `/exit`, EOF ou interruption.
+- [x] Commandes `/help`, `/clear`, `/history`, `/sessions`, `/models`, `/languages`, `/test`.
+- [x] `apple-code -l rust` et `apple-code -i -l RS` prioritaires sur la langue configurée, sans modifier la configuration enregistrée.
+- [x] Tests des alias, des deux modes interactifs, des valeurs par défaut et des langues invalides.
+- [ ] Faire utiliser à `/test` le vrai chemin de vérification ; sa réponse actuelle est statique.
+- [ ] Partager les listes de modèles et de langages entre sous-commandes CLI et REPL ; les réponses interactives sont actuellement statiques ou abrégées.
+- [ ] Définir quelles options de génération du mode direct sont prises en charge dans le REPL, puis les transmettre ou les refuser explicitement.
+- [ ] Ajouter le streaming du backend jusqu'à stdout, avec propagation des erreurs et interruption propre. Aujourd'hui, la réponse complète est attendue avant affichage.
 
-2. **Thème**
-   - Respecter `--theme` / `config.theme` (light/dark) pour couleurs du terminal (titres, code, bordures).
+Commencer par l'affichage des chunks dans le terminal ; aucune nouvelle dépendance de TUI n'est requise par principe.
 
-3. **Affichage du code (preview)**
-   - En mode direct, si `--preview` ou pas de `--output`, afficher le code généré dans le terminal avec bordures et titres (sans TUI complète pour l’instant).
+Source : [REPL](../src/ui/repl.rs).
 
-4. **Dépendances**
-   - Ajouter `owo_colors` (ou `colored`), éventuellement `figlet_rs` ou art statique.
+## Phase 5 – Conversations : persistance livrée
 
-**Livrables** : logo au lancement, thème appliqué, preview du code en terminal.
+- [x] Types `Message`, `Role`, `Session` ; identifiants UUID et fichiers JSON dans le répertoire de configuration.
+- [x] Création, chargement et sauvegarde des messages ; `/sessions <id>` et `/history`.
+- [x] Reprise en mode direct avec `--extend-conversation` et formatage partagé de l'historique.
+- [ ] Choisir la session la plus récente selon sa date : le code prend actuellement le dernier UUID trié lexicalement.
+- [ ] Borner l'historique envoyé au modèle et éviter de réinclure inutilement le prompt courant.
+- [ ] Définir la persistance des données de contexte : stdin et fichiers ne sont pas sauvegardés avec le prompt utilisateur actuel.
+- [ ] Tester la reprise sur plusieurs sessions et les échecs de lecture/écriture.
 
----
+`/clear` efface l'écran, pas la conversation. Aucune analyse automatique du dépôt n'est déclenchée par `--extend-conversation`.
 
-## Phase 3 – Intégration Apple Intelligence (client API)
+Source : [gestionnaire de sessions](../src/conversation/manager.rs).
 
-**But** : brancher le flux de génération de code à un “client” Apple Foundation (ou mock pour dev).
+## Phase 6 – Fichiers et presse-papiers : priorité à la sécurité des écritures
 
-1. **Modèle d’API**
-   - Définir dans `api` une interface (trait) du type :  
-     `generate(&self, prompt, language, options) -> Result<StreamOrResponse>`.
-   - Types dans `types` : `GenerateRequest`, `GenerateResponse` ou stream de chunks.
-
-2. **Implémentation réelle ou mock**
-   - **Option A (macOS)** : appels vers l’API on-device Apple (Foundation Models) si disponible (FFI, CLI système, ou doc Apple).
-   - **Option B (mock)** : client mock qui retourne du code statique ou un délai + snippet, pour développer le reste (TUI, streaming, fichiers) sans dépendance Apple.
-
-3. **Options de génération**
-   - Utiliser `args` + `config` : `temperature`, `max_tokens`, `model`, `context`.
-
-**Livrables** : trait + impl (réelle ou mock), génération déclenchée depuis le handler avec options.
-
----
-
-## Phase 4 – Streaming et mode interactif (TUI)
-
-**But** : réponses en streaming et mode interactif type REPL avec historique.
-
-1. **Streaming**
-   - Si l’API Apple (ou le mock) renvoie un stream, afficher les chunks au fur et à mesure dans le terminal (sans effacer la ligne de prompt).
-   - Utiliser `crossterm` ou `ratatui` pour mise à jour du texte (zone dédiée “réponse”).
-
-2. **Mode interactif (REPL)**
-   - Boucle readline : prompt `> `, lecture de la ligne.
-   - Commandes internes : `/help`, `/exit`, `/clear`, `/history`, `/sessions`, `/models`, `/languages`, `/test`.
-   - Pour chaque entrée utilisateur (hors commande) : appeler le client de génération et afficher la réponse (streaming si dispo).
-
-3. **Dépendances**
-   - `crossterm` et/ou `ratatui`, `rustyline` ou `linefeed` pour la ligne de commande interactive.
-
-**Livrables** : streaming visible en terminal, REPL avec commandes `/help`, `/exit`, etc.
-
----
-
-## Phase 5 – Gestion des conversations (sessions et historique)
-
-**But** : persistance de l’historique et des sessions (comme dans Apple-AI-CLI).
-
-1. **Modèle de données**
-   - Types `Conversation`, `Message` (role: user/assistant, content), `Session` (id, messages, metadata).
-   - Stockage : répertoire config (ex. `~/.config/apple-code-assistant/sessions/`) avec un fichier par session (JSON ou SQLite léger).
-
-2. **ConversationManager**
-   - Créer/charger session, ajouter message, sauvegarder après chaque échange.
-   - En mode interactif : session “courante” avec contexte des N derniers messages pour les appels API (si l’API le supporte).
-
-3. **Commandes**
-   - `/history` : afficher les messages de la session courante.
-   - `/sessions` : lister les sessions sauvegardées ; option pour charger une session.
-
-**Livrables** : sessions persistantes, `/history` et `/sessions` opérationnels.
-
----
-
-## Phase 6 – Opérations fichiers et presse-papiers
-
-**But** : sauvegarde, édition et copie du code généré.
-
-1. **Fichiers**
-   - **Save** : avec `--save` et `-o/--output`, écrire le code généré dans le fichier (création ou écrasement après confirmation si besoin).
-   - **Edit** : avec `-e/--edit <file>`, envoyer le contenu du fichier + prompt comme contexte, remplacer la sortie dans le fichier (ou afficher un diff avant d’écrire).
-   - Utiliser `utils::file_operations` (ou module dédié) et `Config` pour répertoire par défaut si pertinent.
-
-2. **Presse-papiers (macOS)**
-   - Avec `--copy`, copier le code généré dans le clipboard (crate `clipboard` ou `arboard`).
-   - Gérer l’erreur si non-macOS ou outil absent (message clair).
-
-**Livrables** : `--save -o file`, `--edit file`, `--copy` fonctionnels.
-
----
-
-## Phase 7 – Syntax highlighting
-
-**But** : affichage du code généré avec couleurs par langage (équivalent highlight.js).
-
-1. **Choix de la crate**
-   - Utiliser `syntect` (basé sur Sublime) ou `tree-sitter` + thèmes pour coloriser le code.
-
-2. **Intégration**
-   - Détecter le langage depuis `--language` ou le prompt (utils `language_detector`).
-   - En preview / mode interactif : afficher le code passé par le highlighter avant d’écrire dans le terminal (avec support ANSI).
-
-**Livrables** : code affiché avec couleurs selon le langage (terminal et preview).
-
----
-
-## Phase 8 – Multi-langages et polish
-
-**But** : support explicite de 25+ langages et finition.
-
-1. **Liste des langages**
-   - Fichier ou constante : liste des langages supportés (typescript, javascript, python, rust, go, java, cpp, swift, etc.) avec alias (ts → typescript).
-   - Sous-commande `languages` : afficher cette liste.
-
-2. **Détection et validation**
-   - `utils::language_detector` : proposer un langage par défaut à partir du prompt ou de l’extension du fichier (pour `--edit`).
-   - Valider `--language` par rapport à la liste et afficher une erreur claire si invalide.
-
-3. **Sous-commandes `models` et `test`**
-   - `models` : lister les modèles Apple Foundation disponibles (ou “mock” / config).
-   - `test` : ping ou appel minimal vers l’API pour vérifier la connexion / disponibilité.
-
-4. **Polish**
-   - Gestion SIGINT/SIGTERM (message “Operation cancelled”, sortie propre).
-   - Vérifier tous les chemins d’erreur (fichier illisible, API indisponible, etc.).
-   - README et `--help` à jour avec exemples.
-
-**Livrables** : `languages` et `models`/`test` utiles, détection de langage, gestion des signaux et erreurs, doc à jour.
-
----
-
-## Ordre recommandé et dépendances
-
-```text
-Phase 0 (fait) → Phase 1 (config, logs, erreurs)
-       → Phase 2 (TUI branding, preview)
-       → Phase 3 (API / mock)
-       → Phase 4 (streaming, REPL)
-       → Phase 5 (conversations)
-       → Phase 6 (fichiers, clipboard)
-       → Phase 7 (syntax highlighting)
-       → Phase 8 (multi-langages, polish)
+- [x] Écriture via `-o`, édition via `-e/--edit`, création des répertoires parents et copie via `arboard`.
+- [x] Exemples du README avec langage explicite, mode brut et édition d'une copie plutôt que du fichier source original.
+- [x] Vérifications manuelles de fichiers Rust générés et tests fonctionnels de deux recherches binaires Python en VM ; voir le [rapport des exemples](README_EXAMPLES_TEST_REPORT.md).
+- [ ] Ne pas traiter le nettoyage Markdown comme une validation de syntaxe ou de comportement.
+- [ ] Prévoir une écriture temporaire et une revue du diff avant remplacement du fichier original ; ajouter une validation explicite adaptée au langage lorsque disponible.
+- [ ] Clarifier `--save` : actuellement, `-o` déclenche l'écriture et le booléen `--save` n'est pas consulté.
+- [ ] Couvrir les sorties tronquées, les erreurs d'écriture et la conservation de l'original en cas d'échec.
+
+## Phase 7 – Coloration syntaxique : livrée
+
+- [x] `syntect`, correspondance langage/extension et thèmes clair/sombre.
+- [x] Coloration dans les aperçus et le REPL ; repli vers du texte brut si aucune syntaxe n'est trouvée.
+- [ ] Tester les langages effectivement disponibles dans les syntaxes embarquées, l'absence de couleurs et la préservation des fins de ligne.
+
+La liste des langages acceptés par le CLI ne garantit pas qu'une grammaire de coloration correspondante est embarquée.
+
+## Phase 8 – Langages, pipelines et qualité : partiellement livrée
+
+- [x] Liste centralisée de 20 langages/formats et alias, normalisation et rejet des valeurs `-l` inconnues.
+- [x] stdin séparé de la consigne, `--context`, `--context-glob` et limite d'entrée en mode direct.
+- [x] Gestion de Ctrl+C avec message d'annulation.
+- [ ] Réparer `--repeat-input` : ignoré en mode outil ; hors mode outil, le code répète le prompt plutôt que le stdin.
+- [ ] Rendre `--char-limit` sûr pour UTF-8 et cohérent avec son nom : le code utilise actuellement une longueur et une coupure en octets, susceptibles de couper un caractère.
+- [ ] Décider de la détection de langage depuis un fichier ou un prompt : des fonctions existent, mais ne sont pas branchées au routage actuel.
+- [ ] Faire retourner un code non nul à `apple-code test` lorsqu'une génération échoue.
+- [ ] Aligner les derniers exemples et promesses du README avec les comportements réels, puis automatiser leurs contrôles déterministes.
+- [ ] Ajouter une CI couvrant formatage, Clippy, tests et empaquetage ; fixer une version minimale de Rust après vérification des dépendances.
+
+Source : [handler CLI](../src/cli/handler.rs), [langages](../src/utils/languages.rs).
+
+## Ordre de travail recommandé
+
+1. **Protéger les fichiers** : revue avant remplacement, erreurs d'écriture et code généré invalide.
+2. **Fiabiliser le contexte et les erreurs du backend** : doublonnage, UTF-8, budget et troncature explicite.
+3. **Aligner CLI et REPL** : priorités de configuration, templates, options inactives et codes de sortie.
+4. **Réparer les pipelines et la reprise** : `--repeat-input`, canaux stdout/stderr, choix de session et historique borné.
+5. **Automatiser les régressions**, puis ajouter le streaming sans nouvelle couche d'interface inutile.
+
+## Validation et distribution
+
+Contrôles validés lors de la préparation de la version 0.1.3 :
+
+```bash
+cargo fmt --check
+cargo test --locked
+cargo test --locked --no-default-features
+cargo clippy --locked --all-targets --all-features -- -D warnings
+cargo doc --locked --no-deps
+cargo publish --dry-run --allow-dirty --locked
 ```
 
-- Les phases 1 et 2 peuvent être en grande partie parallélisables une fois les interfaces définies.
-- La phase 3 (API/mock) est le prérequis pour 4, 5, 6.
-- Les phases 6 et 7 améliorent l’UX une fois le flux de génération en place (3+4).
+Les tests unitaires ne nécessitent pas de génération réelle ; les essais Apple Intelligence et du presse-papiers restent manuels. Le [rapport des exemples](README_EXAMPLES_TEST_REPORT.md) conserve les observations historiques et leurs limites ; ses anciens échecs Clippy précèdent les corrections désormais livrées.
 
----
+Pour le backend réel : macOS 26+, Apple Silicon, Apple Intelligence activée et modèle téléchargé, avec Xcode/Command Line Tools compatibles pour compiler le pont Swift. Installation de la version publiée :
 
-## Dépendances Cargo à ajouter (au fil des phases)
+```bash
+MACOSX_DEPLOYMENT_TARGET=26.0 cargo install apple-code-assistant --version 0.1.3 --force
+```
 
-| Phase | Crates suggérées |
-|-------|-------------------|
-| 1 | `dotenvy`, `serde`, `toml` ou équivalent, `thiserror`, `env_logger` ou `tracing` |
-| 2 | `owo_colors` ou `colored`, optionnel `figlet_rs` |
-| 3 | (selon API Apple) ou rien pour mock |
-| 4 | `crossterm`, `ratatui`, `rustyline` ou `linefeed` |
-| 5 | `serde_json`, `uuid` ou ids simples |
-| 6 | `arboard` ou `clipboard` |
-| 7 | `syntect` (ou `bat` pour thèmes) |
+Les fichiers locaux de configuration, l'historique et les fichiers d'éditeur sont exclus du paquet. Lors d'une prochaine publication, vérifier le contenu avec `cargo package --list` ; n'utiliser `--allow-dirty` qu'après contrôle des changements présents.
 
----
-
-## Références
-
-- [Apple-AI-CLI](https://github.com/0xatrilla/Apple-AI-CLI) – référence fonctionnelle et README.
-- [README Apple-AI-CLI](https://raw.githubusercontent.com/0xatrilla/Apple-AI-CLI/refs/heads/main/README.md) – fonctionnalités et commandes.
-
-Ce document peut servir de base pour des issues ou des PRs (une par phase ou par sous-étape).
+Dépendances déjà en place : `clap`, `anyhow`, `thiserror`, `serde`, `toml`, `dotenvy`, `env_logger`, `log`, `dirs`, `apple_ai`, `tokio`, `rustyline`, `serde_json`, `uuid`, `arboard`, `syntect`, `owo-colors`, `ctrlc`, `glob`. Aucune nouvelle dépendance n'est prévue sans besoin démontré.
