@@ -20,8 +20,3 @@ pub struct GenerateResponse {
     pub code: String,
     pub language: Option<String>,
 }
-
-/// Placeholder for conversation message (session/streaming).
-#[allow(dead_code)]
-#[derive(Debug)]
-pub struct ConversationMessage;

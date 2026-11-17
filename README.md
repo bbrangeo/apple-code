@@ -51,16 +51,31 @@ MACOSX_DEPLOYMENT_TARGET=26.0 cargo install apple-code-assistant --force
 apple-code -p "hello world in Python" -l python --tool-mode
 
 # Summarize a diff (smartcat-style)
-git diff | apple-code -p "summarize the changes" --tool-mode --char-limit 8000
+git diff | apple-code -p "summarize the changes" --tool-mode --char-limit 2000 --max-tokens 512
 
 # Use a template for tests
 apple-code -p "write tests for this function" -T tests --tool-mode
 ```
 
+### Piped input and context limits
+
+In tool mode, omit `-l` for text tasks such as summaries; the configured default
+language is only applied outside tool mode. Use `-l python` (or another language)
+when generating code.
+
+The on-device model has a limited context window. The `apple_ai` 0.1.1 bridge
+also duplicates the current prompt in its transcript and can expose model errors
+as JSON parsing errors. If a large diff fails, reduce `--char-limit` and
+`--max-tokens`. These are input/output caps, not a guarantee that a request fits.
+`--char-limit` truncates the input: a summary then covers only that portion of
+the diff. For a full review, process smaller diffs separately.
+
 ### Getting plain code only (no markdown)
 
 By default, some models may still wrap code in ``` fences and add explanations.
-To force plain code output suitable for files and editors:
+When saving, editing, or redirecting source code, specify its language with `-l`
+and use `--tool-mode` to request raw code and remove Markdown fences. This does
+not validate the generated program: review and test it before use.
 
 ```bash
 # Only code written to the file (no markdown, no explanation)
@@ -74,10 +89,11 @@ You can further tighten behavior with a prompt template in `config.toml`, for ex
 system = "Never use markdown or explanations. Return only the final code."
 ```
 
-Then call:
+Then call (use `--config config.toml` to load the file from this checkout;
+otherwise configuration is read from the user config directory):
 
 ```bash
-apple-code -p "implement binary search" -l python -T strict_code --save -o binary_search.py --tool-mode
+apple-code --config config.toml -p "implement binary search" -l python -T strict_code --save -o binary_search.py --tool-mode
 ```
 
 ### Examples (from source checkout)
@@ -89,8 +105,9 @@ cargo run -- -i
 # Direct code generation with preview
 cargo run -- -p "hello world in Python" -l python --preview
 
-# Save to file
-cargo run -- -p "quicksort" -l rust --save -o sort.rs
+# Save raw Rust code, without terminal formatting or Markdown fences
+cargo run -- -p "Implement pub fn sort_numbers(values: &mut [i32]) by calling values.sort_unstable()." -l rust --save -o sort.rs --tool-mode
+rustc --edition 2021 --crate-type lib --emit metadata sort.rs
 
 # Copy to clipboard
 cargo run -- -p "utility function" --copy
@@ -98,7 +115,7 @@ cargo run -- -p "utility function" --copy
 # Use stdin as context (pipe data in, smartcat-style)
 git diff | apple-code -p "summarize the changes"
 git diff | apple-code -p "summarize the changes" > summary.txt
-cat src/main.rs | apple-code -p "add doc comments to this code"
+cat src/main.rs | apple-code -p "add doc comments to this code" -l rust --tool-mode
 
 # Use prompt templates from config.toml
 apple-code -p "write tests for this function" -T tests
@@ -114,8 +131,13 @@ git diff | apple-code -p "apply these changes but fix formatting" --repeat-input
 # Limit size of piped/context data and add globbed context files
 git diff | apple-code -p "summarize the changes" --char-limit 8000 --context-glob "src/**/*.rs"
 
-# Edit existing file (send file content + prompt to model, write result back)
-cargo run -- -p "add error handling" -e src/main.rs
+# Edit a copy: --edit overwrites its input file
+cp src/main.rs main.generated.rs
+cargo run -- -p "Import anyhow::Context and add .context(\"Failed to load configuration\") to the Config::load result. Keep main returning anyhow::Result<()> and preserve the CLI behavior. Return the complete source file." -l rust --tool-mode -e main.generated.rs
+
+# Review the result before integrating it; diff exits with 1 when files differ
+# Do not replace src/main.rs until the generated code has been checked and tested
+diff -u src/main.rs main.generated.rs
 
 # Configuration
 cargo run -- config --list

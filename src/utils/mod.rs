@@ -41,7 +41,10 @@ pub fn read_file(path: &Path) -> Result<String, IoError> {
 
 /// Copy text to system clipboard (macOS/Windows/Linux via arboard).
 pub fn copy_to_clipboard(text: &str) -> Result<(), IoError> {
-    let mut clipboard = arboard::Clipboard::new().map_err(|e| IoError::PermissionDenied(e.to_string()))?;
-    clipboard.set_text(text).map_err(|e| IoError::PermissionDenied(e.to_string()))?;
+    let mut clipboard =
+        arboard::Clipboard::new().map_err(|e| IoError::PermissionDenied(e.to_string()))?;
+    clipboard
+        .set_text(text)
+        .map_err(|e| IoError::PermissionDenied(e.to_string()))?;
     Ok(())
 }

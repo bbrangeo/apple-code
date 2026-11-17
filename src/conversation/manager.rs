@@ -3,7 +3,6 @@
 use std::fs;
 use std::path::PathBuf;
 
-use serde_json;
 use uuid::Uuid;
 
 use super::{Message, Role, Session};
@@ -74,7 +73,8 @@ impl ConversationManager {
         if let Some(ref s) = self.current {
             self.ensure_dir()?;
             let path = self.sessions_dir.join(format!("{}.json", s.id));
-            let json = serde_json::to_string_pretty(s).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+            let json = serde_json::to_string_pretty(s)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
             fs::write(path, json)?;
         }
         Ok(())
@@ -86,7 +86,7 @@ impl ConversationManager {
         for entry in fs::read_dir(&self.sessions_dir)? {
             let entry = entry?;
             let path = entry.path();
-            if path.extension().map_or(false, |e| e == "json") {
+            if path.extension().is_some_and(|e| e == "json") {
                 if let Some(stem) = path.file_stem() {
                     ids.push(stem.to_string_lossy().to_string());
                 }
@@ -102,9 +102,10 @@ impl ConversationManager {
             return Ok(None);
         }
         let content = fs::read_to_string(&path)?;
-        let session: Session = serde_json::from_str(&content).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        let session: Session = serde_json::from_str(&content)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         self.current = Some(session);
-        Ok(self.current.as_ref().into())
+        Ok(self.current.as_ref())
     }
 
     pub fn history(&self) -> &[Message] {
@@ -117,6 +118,9 @@ impl ConversationManager {
 
 fn chrono_iso() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
-    let t = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    let t = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
     format!("{}", t)
 }

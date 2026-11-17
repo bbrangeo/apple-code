@@ -3,9 +3,9 @@
 use anyhow::Result;
 use rustyline::DefaultEditor;
 
-use crate::api::{self, CodeGenClient};
+use crate::api;
 use crate::config::Config;
-use crate::conversation::ConversationManager;
+use crate::conversation::{format_history, ConversationManager};
 use crate::types::GenerateRequest;
 use crate::ui::{print_code_preview, Theme};
 
@@ -38,7 +38,7 @@ pub fn run(theme: Theme, config: &Config) -> Result<()> {
                     continue;
                 }
                 if line.starts_with('/') {
-                    if run_command(line, theme, &mut manager)?.is_break() {
+                    if matches!(run_command(line, &mut manager)?, CommandResult::Exit) {
                         break;
                     }
                     continue;
@@ -50,21 +50,7 @@ pub fn run(theme: Theme, config: &Config) -> Result<()> {
 
                 // Build conversational context from current session history (excluding the
                 // just-entered line, which is already in `prompt`).
-                let history = manager.history();
-                let mut context = String::new();
-                if !history.is_empty() {
-                    for msg in history {
-                        let role = match msg.role {
-                            crate::conversation::Role::User => "user",
-                            crate::conversation::Role::Assistant => "assistant",
-                        };
-                        context.push_str("[");
-                        context.push_str(role);
-                        context.push_str("] ");
-                        context.push_str(&msg.content);
-                        context.push('\n');
-                    }
-                }
+                let context = format_history(manager.history());
 
                 let request = GenerateRequest {
                     prompt: line.to_string(),
@@ -72,23 +58,24 @@ pub fn run(theme: Theme, config: &Config) -> Result<()> {
                     temperature: config.temperature.unwrap_or(0.7),
                     max_tokens: config.max_tokens.unwrap_or(4000),
                     model: config.model.clone(),
-                    context: if context.is_empty() { None } else { Some(context) },
+                    context: if context.is_empty() {
+                        None
+                    } else {
+                        Some(context)
+                    },
                     tool_mode: false,
                 };
                 match client.generate(&request) {
                     Ok(response) => {
                         let _ = manager.add_assistant_message(&response.code);
                         let _ = rl.add_history_entry(line);
-                        print_code_preview(
-                            &response.code,
-                            response.language.as_deref(),
-                            theme,
-                        );
+                        print_code_preview(&response.code, response.language.as_deref(), theme);
                     }
                     Err(e) => eprintln!("Error: {}", e),
                 }
             }
-            Err(rustyline::error::ReadlineError::Eof) | Err(rustyline::error::ReadlineError::Interrupted) => break,
+            Err(rustyline::error::ReadlineError::Eof)
+            | Err(rustyline::error::ReadlineError::Interrupted) => break,
             Err(e) => return Err(e.into()),
         }
     }
@@ -102,18 +89,9 @@ enum CommandResult {
     Exit,
 }
 
-trait Break {
-    fn is_break(self) -> bool;
-}
-impl Break for CommandResult {
-    fn is_break(self) -> bool {
-        matches!(self, CommandResult::Exit)
-    }
-}
-
-fn run_command(input: &str, _theme: Theme, manager: &mut ConversationManager) -> Result<CommandResult> {
+fn run_command(input: &str, manager: &mut ConversationManager) -> Result<CommandResult> {
     let parts: Vec<&str> = input.split_whitespace().collect();
-    let cmd = parts.get(0).unwrap_or(&"").to_lowercase();
+    let cmd = parts.first().unwrap_or(&"").to_lowercase();
     match cmd.as_str() {
         "/help" => println!("{}", HELP_TEXT.trim()),
         "/exit" => return Ok(CommandResult::Exit),
@@ -122,11 +100,11 @@ fn run_command(input: &str, _theme: Theme, manager: &mut ConversationManager) ->
         }
         "/history" => {
             for msg in manager.history() {
-                let role = match msg.role {
-                    crate::conversation::Role::User => "user",
-                    crate::conversation::Role::Assistant => "assistant",
-                };
-                println!("[{}] {}", role, msg.content.lines().next().unwrap_or(""));
+                println!(
+                    "[{}] {}",
+                    msg.role,
+                    msg.content.lines().next().unwrap_or("")
+                );
             }
             if manager.history().is_empty() {
                 println!("(No messages in current session)");
@@ -154,7 +132,9 @@ fn run_command(input: &str, _theme: Theme, manager: &mut ConversationManager) ->
             }
         }
         "/models" => println!("Available models: apple-foundation-model (mock)"),
-        "/languages" => println!("Supported: typescript, python, rust, go, java, ... (see 'apple-code languages')"),
+        "/languages" => println!(
+            "Supported: typescript, python, rust, go, java, ... (see 'apple-code languages')"
+        ),
         "/test" => println!("API test: OK (mock client)"),
         _ => println!("Unknown command. Type /help for commands."),
     }

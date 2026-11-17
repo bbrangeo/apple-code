@@ -79,8 +79,9 @@ impl Config {
 
         if let Some(ref path) = config_path {
             if path.exists() {
-                let content = std::fs::read_to_string(path).map_err(|e| ConfigError::Io(e))?;
-                let file_config: ConfigFile = toml::from_str(&content).map_err(|e| ConfigError::Parse(e.to_string()))?;
+                let content = std::fs::read_to_string(path).map_err(ConfigError::Io)?;
+                let file_config: Config =
+                    toml::from_str(&content).map_err(|e| ConfigError::Parse(e.to_string()))?;
                 config.merge_file(file_config);
                 config.config_file = Some(path.clone());
             }
@@ -90,7 +91,7 @@ impl Config {
         Ok(config)
     }
 
-    fn merge_file(&mut self, f: ConfigFile) {
+    fn merge_file(&mut self, f: Config) {
         if f.model.is_some() {
             self.model = f.model;
         }
@@ -152,16 +153,7 @@ impl Config {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(ConfigError::Io)?;
         }
-        let file = ConfigFile {
-            model: self.model.clone(),
-            default_language: self.default_language.clone(),
-            theme: self.theme.clone(),
-            max_tokens: self.max_tokens,
-            temperature: self.temperature,
-            default_prompt: self.default_prompt.clone(),
-            prompts: self.prompts.clone(),
-        };
-        let toml = toml::to_string_pretty(&file).map_err(|e| ConfigError::Invalid(e.to_string()))?;
+        let toml = toml::to_string_pretty(self).map_err(|e| ConfigError::Invalid(e.to_string()))?;
         std::fs::write(&path, toml).map_err(ConfigError::Io)?;
         Ok(())
     }
@@ -182,13 +174,23 @@ impl Config {
     pub fn set(&mut self, key: &str, value: &str) -> Result<(), ConfigError> {
         match key {
             "model" | "APPLE_FOUNDATION_MODEL" => self.model = Some(value.to_string()),
-            "default_language" | "APPLE_CODE_DEFAULT_LANGUAGE" => self.default_language = Some(value.to_string()),
+            "default_language" | "APPLE_CODE_DEFAULT_LANGUAGE" => {
+                self.default_language = Some(value.to_string())
+            }
             "theme" | "APPLE_CODE_THEME" => self.theme = Some(value.to_string()),
             "max_tokens" | "APPLE_CODE_MAX_TOKENS" => {
-                self.max_tokens = Some(value.parse().map_err(|_| ConfigError::Invalid(format!("invalid number: {}", value)))?);
+                self.max_tokens = Some(
+                    value
+                        .parse()
+                        .map_err(|_| ConfigError::Invalid(format!("invalid number: {}", value)))?,
+                );
             }
             "temperature" | "APPLE_CODE_TEMPERATURE" => {
-                self.temperature = Some(value.parse().map_err(|_| ConfigError::Invalid(format!("invalid number: {}", value)))?);
+                self.temperature = Some(
+                    value
+                        .parse()
+                        .map_err(|_| ConfigError::Invalid(format!("invalid number: {}", value)))?,
+                );
             }
             _ => return Err(ConfigError::Invalid(format!("unknown key: {}", key))),
         }
@@ -197,21 +199,14 @@ impl Config {
 
     /// All keys for --list.
     pub fn keys() -> &'static [&'static str] {
-        &["model", "default_language", "theme", "max_tokens", "temperature"]
+        &[
+            "model",
+            "default_language",
+            "theme",
+            "max_tokens",
+            "temperature",
+        ]
     }
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct ConfigFile {
-    model: Option<String>,
-    default_language: Option<String>,
-    theme: Option<String>,
-    max_tokens: Option<u32>,
-    temperature: Option<f32>,
-     /// Optional default prompt template name.
-    default_prompt: Option<String>,
-    /// Optional map of prompt templates.
-    prompts: Option<HashMap<String, PromptConfig>>,
 }
 
 impl Config {
@@ -220,13 +215,110 @@ impl Config {
         let prompts = self.prompts.as_ref()?;
         let key = if let Some(name) = name {
             name
-        } else if let Some(default) = self.default_prompt.as_deref() {
-            default
         } else {
-            return None;
+            self.default_prompt.as_deref()?
         };
-        prompts
-            .get_key_value(key)
-            .map(|(k, v)| (k.as_str(), v))
+        prompts.get_key_value(key).map(|(k, v)| (k.as_str(), v))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn toml_roundtrip_absent_fields() {
+        let config: Config = toml::from_str("").expect("empty TOML is valid config");
+        assert!(config.model.is_none());
+        assert!(config.default_language.is_none());
+        assert!(config.theme.is_none());
+        assert!(config.max_tokens.is_none());
+        assert!(config.temperature.is_none());
+        assert!(config.default_prompt.is_none());
+        assert!(config.prompts.is_none());
+        assert!(config.config_file.is_none());
+
+        let serialized = toml::to_string_pretty(&config).expect("config serializes");
+        assert_eq!(serialized, "");
+        let roundtrip: Config = toml::from_str(&serialized).expect("config roundtrips");
+        assert_eq!(toml::to_string_pretty(&roundtrip).unwrap(), serialized);
+    }
+
+    #[test]
+    fn toml_roundtrip_present_fields_preserves_format() {
+        let source = concat!(
+            "model = \"test-model\"\n",
+            "default_language = \"rust\"\n",
+            "theme = \"light\"\n",
+            "max_tokens = 8000\n",
+            "temperature = 0.25\n",
+            "default_prompt = \"review\"\n",
+            "\n",
+            "[prompts.review]\n",
+            "model = \"review-model\"\n",
+            "temperature = 0.5\n",
+            "system = \"Review carefully\"\n",
+        );
+        let config: Config = toml::from_str(source).expect("full TOML is valid config");
+        let serialized = toml::to_string_pretty(&config).expect("config serializes");
+        assert_eq!(serialized, source);
+        let roundtrip: Config = toml::from_str(&serialized).expect("config roundtrips");
+        assert_eq!(toml::to_string_pretty(&roundtrip).unwrap(), source);
+    }
+
+    #[test]
+    fn config_file_is_excluded_from_toml() {
+        let mut config: Config =
+            toml::from_str("model = \"test-model\"\nconfig_file = \"ignored.toml\"\n")
+                .expect("config_file input is ignored");
+        assert!(config.config_file.is_none());
+        config.config_file = Some(PathBuf::from("local.toml"));
+        let serialized = toml::to_string_pretty(&config).expect("config serializes");
+        assert_eq!(serialized, "model = \"test-model\"\n");
+        let roundtrip: Config = toml::from_str(&serialized).expect("config roundtrips");
+        assert!(roundtrip.config_file.is_none());
+    }
+
+    #[test]
+    fn merge_empty_file_preserves_defaults() {
+        let mut config = Config::default();
+        let expected = toml::to_string_pretty(&config).unwrap();
+        config.merge_file(toml::from_str("").expect("empty TOML is valid config"));
+        assert_eq!(toml::to_string_pretty(&config).unwrap(), expected);
+    }
+
+    #[test]
+    fn merge_file_overrides_only_present_fields() {
+        let mut config = Config {
+            config_file: Some(PathBuf::from("original.toml")),
+            ..Config::default()
+        };
+        let file_config: Config = toml::from_str(
+            r#"model = "test-model"
+max_tokens = 0
+temperature = 0.0
+default_prompt = "review"
+
+[prompts.review]
+system = "Review carefully"
+"#,
+        )
+        .expect("partial TOML is valid config");
+        config.merge_file(file_config);
+
+        assert_eq!(config.model.as_deref(), Some("test-model"));
+        assert_eq!(config.default_language.as_deref(), Some("typescript"));
+        assert_eq!(config.theme.as_deref(), Some("dark"));
+        assert_eq!(config.max_tokens, Some(0));
+        assert_eq!(config.temperature, Some(0.0));
+        assert_eq!(config.default_prompt.as_deref(), Some("review"));
+        let (name, prompt) = config
+            .resolve_prompt(None)
+            .expect("default prompt resolves");
+        assert_eq!(name, "review");
+        assert_eq!(prompt.system.as_deref(), Some("Review carefully"));
+        assert!(prompt.model.is_none());
+        assert!(prompt.temperature.is_none());
+        assert_eq!(config.config_file, Some(PathBuf::from("original.toml")));
     }
 }
