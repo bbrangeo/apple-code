@@ -75,19 +75,16 @@ impl Handler {
             return Ok(());
         }
 
+        let language = resolve_language(args, config)?;
         if args.interactive || args.prompt.is_none() {
             let theme = ui::Theme::from_str(&args.theme);
-            ui::run_interactive(theme, config)?;
+            let interactive_config = Config {
+                default_language: language,
+                ..config.clone()
+            };
+            ui::run_interactive(theme, &interactive_config)?;
             return Ok(());
         }
-
-        let language = match args.language.as_deref() {
-            Some(lang) => Some(normalize(lang).ok_or_else(|| {
-                anyhow::anyhow!("Unsupported language: '{}'. Use 'apple-code languages' to list supported languages.", lang)
-            })?),
-            None if args.tool_mode => None,
-            None => config.default_language.clone(),
-        };
 
         // Conversation manager for non-interactive CLI when extending conversations.
         let mut conversation_manager = if args.extend_conversation {
@@ -278,6 +275,16 @@ impl Handler {
     }
 }
 
+fn resolve_language(args: &Args, config: &Config) -> Result<Option<String>> {
+    match args.language.as_deref() {
+        Some(lang) => normalize(lang).map(Some).ok_or_else(|| {
+            anyhow::anyhow!("Unsupported language: '{}'. Use 'apple-code languages' to list supported languages.", lang)
+        }),
+        None if args.tool_mode && !args.interactive && args.prompt.is_some() => Ok(None),
+        None => Ok(config.default_language.clone()),
+    }
+}
+
 fn read_context_globs(patterns: &[String]) -> Option<String> {
     let mut chunks: Vec<String> = Vec::new();
     for pattern in patterns {
@@ -321,7 +328,66 @@ impl Default for Handler {
 
 #[cfg(test)]
 mod tests {
-    use super::strip_markdown_code_block;
+    use super::{resolve_language, strip_markdown_code_block};
+    use crate::{config::Config, Args};
+    use clap::Parser;
+
+    #[test]
+    fn cli_language_overrides_config_in_both_interactive_modes() {
+        let config = Config {
+            default_language: Some("python".into()),
+            ..Config::default()
+        };
+        for arguments in [
+            vec!["apple-code", "-l", "rust"],
+            vec!["apple-code", "-i", "-l", "RS"],
+            vec!["apple-code", "-i", "-p", "fibonacci", "-l", "rust"],
+            vec!["apple-code", "-p", "fibonacci", "-l", "rust"],
+        ] {
+            let args = Args::try_parse_from(&arguments).expect("valid CLI arguments");
+            assert_eq!(
+                resolve_language(&args, &config).expect("supported language"),
+                Some("rust".into()),
+                "arguments: {arguments:?}"
+            );
+        }
+        assert_eq!(config.default_language.as_deref(), Some("python"));
+    }
+
+    #[test]
+    fn language_defaults_and_validation_are_consistent() {
+        let config = Config {
+            default_language: Some("python".into()),
+            ..Config::default()
+        };
+        for (arguments, expected) in [
+            (vec!["apple-code"], Some("python")),
+            (vec!["apple-code", "-i", "--tool-mode"], Some("python")),
+            (vec!["apple-code", "-p", "fibonacci"], Some("python")),
+            (vec!["apple-code", "-p", "summarize", "--tool-mode"], None),
+        ] {
+            let args = Args::try_parse_from(&arguments).expect("valid CLI arguments");
+            assert_eq!(
+                resolve_language(&args, &config)
+                    .expect("valid language selection")
+                    .as_deref(),
+                expected,
+                "arguments: {arguments:?}"
+            );
+        }
+        for arguments in [
+            vec!["apple-code", "-l", "invalid_language"],
+            vec!["apple-code", "-i", "-l", "invalid_language"],
+            vec!["apple-code", "-p", "fibonacci", "-l", "invalid_language"],
+        ] {
+            let args = Args::try_parse_from(&arguments).expect("valid CLI syntax");
+            let error = resolve_language(&args, &config).expect_err("unsupported language");
+            assert!(
+                error.to_string().contains("Unsupported language"),
+                "{error}"
+            );
+        }
+    }
 
     #[test]
     fn markdown_extraction_preserves_existing_behavior() {

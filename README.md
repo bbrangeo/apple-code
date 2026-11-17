@@ -102,6 +102,9 @@ apple-code --config config.toml -p "implement binary search" -l python -T strict
 # Interactive mode (REPL with logo, /help, /exit, /history, /sessions)
 cargo run -- -i
 
+# Interactive Rust session: -l overrides the configured default for this session
+apple-code -l rust
+
 # Direct code generation with preview
 cargo run -- -p "hello world in Python" -l python --preview
 
