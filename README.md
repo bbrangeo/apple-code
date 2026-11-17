@@ -7,8 +7,9 @@ Inspired by [Apple-AI-CLI](https://github.com/0xatrilla/Apple-AI-CLI).
 ## Prerequisites
 
 - **Rust** 1.70+ (edition 2021)
-- **macOS 15+** with Apple Intelligence support (for future integration)
-- **Apple Silicon Mac** recommended
+- **macOS 26+** with Apple Intelligence enabled and its on-device model downloaded
+- **Apple Silicon Mac**
+- **Xcode 26+** or compatible Command Line Tools with `swiftc` available
 
 ## Installation
 
@@ -27,6 +28,20 @@ apple-code --help
 ```bash
 cargo build
 cargo run -- --help
+```
+
+To replace an installed `apple-code` with the version from this checkout:
+
+```bash
+cargo install --path . --force
+apple-code --version
+```
+
+The checkout sets `MACOSX_DEPLOYMENT_TARGET=26.0` in `.cargo/config.toml`,
+required by the Swift bridge. For a crates.io installation, set it explicitly:
+
+```bash
+MACOSX_DEPLOYMENT_TARGET=26.0 cargo install apple-code-assistant --force
 ```
 
 ### Quick start

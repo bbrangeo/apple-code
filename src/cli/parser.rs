@@ -4,7 +4,10 @@ use clap::Parser;
 
 #[derive(Parser, Debug)]
 #[command(name = "apple-code")]
-#[command(version, about = "Apple Code Assistant - Generate code using Apple Foundation Models")]
+#[command(
+    version,
+    about = "Apple Code Assistant - Generate code using Apple Foundation Models"
+)]
 pub struct Args {
     /// Code generation prompt
     #[arg(short, long)]
@@ -87,7 +90,7 @@ pub struct Args {
     pub debug: bool,
 
     /// Extend previous conversation instead of starting a new one
-    #[arg(short = 'e', long)]
+    #[arg(long)]
     pub extend_conversation: bool,
 
     /// Repeat input before output (useful for editor integration)
@@ -100,6 +103,17 @@ pub struct Args {
 
     #[command(subcommand)]
     pub subcommand: Option<Subcommand>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Args;
+    use clap::CommandFactory;
+
+    #[test]
+    fn cli_options_are_valid() {
+        Args::command().debug_assert();
+    }
 }
 
 #[derive(clap::Subcommand, Debug)]

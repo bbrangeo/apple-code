@@ -1,3 +1,6 @@
 # Use project-local target directory so the binary is always at ./target/release/apple-code
 [build]
 target-dir = "target"
+
+[env]
+MACOSX_DEPLOYMENT_TARGET = "26.0"
