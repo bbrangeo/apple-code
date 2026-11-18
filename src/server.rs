@@ -8,12 +8,13 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use apple_ai::{AppleAiClient, AppleAiError, GenerationOptions};
-use axum::extract::{rejection::JsonRejection, DefaultBodyLimit, State};
+use axum::extract::{rejection::JsonRejection, DefaultBodyLimit, MatchedPath, Request, State};
 use axum::http::StatusCode;
+use axum::middleware::{self, Next};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use axum::{Json, Router};
+use axum::{Extension, Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -40,6 +41,7 @@ pub(crate) fn run(address: SocketAddr) -> anyhow::Result<()> {
             );
         }
         eprintln!("Apple Intelligence API listening on http://{address}");
+        log::info!("HTTP request logging enabled; message content is not logged");
         axum::serve(listener, router(client))
             .with_graceful_shutdown(shutdown())
             .await?;
@@ -88,11 +90,39 @@ fn router(client: Arc<AppleAiClient>) -> Router {
             )
         })
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
+        .layer(middleware::from_fn(log_request))
         .with_state(AppState {
             client,
             // ponytail: one inference at a time; increase only after measuring model contention.
             slots: Arc::new(Semaphore::new(1)),
         })
+}
+
+#[derive(Clone)]
+struct RequestId(String);
+
+async fn log_request(mut request: Request, next: Next) -> Response {
+    let id = uuid::Uuid::new_v4().simple().to_string();
+    let started = Instant::now();
+    let method = request.method().clone();
+    let route = request
+        .extensions()
+        .get::<MatchedPath>()
+        .map(|path| path.as_str().to_owned())
+        .unwrap_or_else(|| "<unmatched>".into());
+    request.extensions_mut().insert(RequestId(id.clone()));
+    log::info!("request={id} http_start method={method} route={route}");
+    let mut response = next.run(request).await;
+    response.headers_mut().insert(
+        "x-request-id",
+        id.parse().expect("UUID is a valid HTTP header value"),
+    );
+    log::info!(
+        "request={id} http_response status={} headers_ms={}",
+        response.status().as_u16(),
+        started.elapsed().as_millis()
+    );
+    response
 }
 
 async fn health() -> Result<Json<Value>, ApiError> {
@@ -116,6 +146,10 @@ struct ChatRequest {
     temperature: Option<f64>,
     #[serde(alias = "max_completion_tokens")]
     max_tokens: Option<u32>,
+    tools: Option<Vec<Value>>,
+    tool_choice: Option<Value>,
+    // Compatibility hint only: the native API has no reasoning-effort control.
+    reasoning_effort: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -142,32 +176,40 @@ impl ChatRequest {
                 "Only apple-intelligence is available",
             ));
         }
+        if self.tools.as_ref().is_some_and(|tools| !tools.is_empty())
+            || self
+                .tool_choice
+                .as_ref()
+                .is_some_and(|choice| choice != "none")
+        {
+            return Err(ApiError::invalid(
+                "Tool calling is not supported; disable tools in the client (tools: [], tool_choice: none)",
+            ));
+        }
         if self.messages.is_empty() || self.messages.len() > 256 {
             return Err(ApiError::invalid(
                 "messages must contain between 1 and 256 entries",
             ));
         }
-        let mut expected = Role::User;
         let mut in_history = false;
         for message in &self.messages {
             if message.content.trim().is_empty() {
                 return Err(ApiError::invalid("Message content must not be empty"));
             }
-            if !in_history && message.role == Role::System {
-                continue;
-            }
-            in_history = true;
-            if message.role != expected {
-                return Err(ApiError::invalid("After initial system messages, roles must alternate user/assistant and end with user"));
-            }
-            expected = if expected == Role::User {
-                Role::Assistant
+            if message.role == Role::System {
+                if in_history {
+                    return Err(ApiError::invalid(
+                        "System messages must precede the conversation",
+                    ));
+                }
             } else {
-                Role::User
-            };
+                in_history = true;
+            }
         }
-        if !in_history || expected != Role::Assistant {
-            return Err(ApiError::invalid("The last message must have role user"));
+        if !in_history {
+            return Err(ApiError::invalid(
+                "The conversation must contain a user or assistant message",
+            ));
         }
         if self
             .temperature
@@ -184,6 +226,7 @@ impl ChatRequest {
 
 async fn chat(
     State(state): State<AppState>,
+    Extension(RequestId(request_id)): Extension<RequestId>,
     body: Result<Json<ChatRequest>, JsonRejection>,
 ) -> Result<Response, ApiError> {
     let Json(request) = body.map_err(|e| {
@@ -194,6 +237,27 @@ async fn chat(
         };
         ApiError::new(status, "invalid_request_error", &e.body_text())
     })?;
+    let started = Instant::now();
+    let system_bytes: usize = request
+        .messages
+        .iter()
+        .filter(|message| message.role == Role::System)
+        .map(|message| message.content.len())
+        .sum();
+    let message_bytes: usize = request
+        .messages
+        .iter()
+        .map(|message| message.content.len())
+        .sum();
+    let roles: Vec<_> = request
+        .messages
+        .iter()
+        .map(|message| &message.role)
+        .collect();
+    log::info!(
+        "request={request_id} chat_request stream={} messages={} roles={roles:?} input_bytes={message_bytes} system_bytes={system_bytes} max_tokens={}",
+        request.stream, request.messages.len(), request.max_tokens.unwrap_or(512)
+    );
     request.validate()?;
     let permit = state.slots.clone().try_acquire_owned().map_err(|_| {
         ApiError::new(
@@ -206,6 +270,10 @@ async fn chat(
     let mut generation = Generation::start(&state.client, request)?;
     // Catch native errors before committing HTTP 200 and SSE headers.
     let first = generation.next().await?;
+    log::info!(
+        "request={request_id} generation_ready elapsed_ms={}",
+        started.elapsed().as_millis()
+    );
     let id = format!("chatcmpl-{}", uuid::Uuid::new_v4().simple());
     let created = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -218,6 +286,11 @@ async fn chat(
             text.push_str(&delta);
             event = generation.next().await?;
         }
+        log::info!(
+            "request={request_id} generation_complete stream=false output_bytes={} elapsed_ms={}",
+            text.len(),
+            started.elapsed().as_millis()
+        );
         return Ok(Json(json!({
             "id": id, "object": "chat.completion", "created": created, "model": MODEL,
             "choices": [{"index": 0, "message": {"role": "assistant", "content": text}, "finish_reason": "stop"}]
@@ -228,6 +301,8 @@ async fn chat(
     tokio::spawn(async move {
         let _permit = permit;
 
+        let mut output_bytes = 0usize;
+        let mut completed = false;
         let result = time::timeout_at(generation.deadline, async {
             send(
                 &sender,
@@ -238,6 +313,7 @@ async fn chat(
             loop {
                 match event {
                     BridgeEvent::Delta(delta) => {
+                        output_bytes += delta.len();
                         send(
                             &sender,
                             chunk(&id, created, json!({"content": delta}), Value::Null),
@@ -246,7 +322,9 @@ async fn chat(
                     }
                     BridgeEvent::Done => {
                         send(&sender, chunk(&id, created, json!({}), json!("stop"))).await?;
-                        return send(&sender, "[DONE]".into()).await;
+                        send(&sender, "[DONE]".into()).await?;
+                        completed = true;
+                        return Ok(());
                     }
                 }
                 event = tokio::select! {
@@ -258,12 +336,20 @@ async fn chat(
         .await
         .unwrap_or_else(|_| Err(ApiError::timeout()));
         if let Err(error) = result {
+            log::warn!("request={request_id} stream_error code={} status={} output_bytes={output_bytes} elapsed_ms={}", error.code, error.status.as_u16(), started.elapsed().as_millis());
             // Once SSE starts, failures are events, not a fabricated successful completion.
             let _ = time::timeout(
                 Duration::from_secs(1),
                 send(&sender, error.body().to_string()),
             )
             .await;
+        } else {
+            let outcome = if completed {
+                "generation_complete"
+            } else {
+                "client_disconnected"
+            };
+            log::info!("request={request_id} {outcome} stream=true output_bytes={output_bytes} elapsed_ms={}", started.elapsed().as_millis());
         }
     });
     Ok(Sse::new(ReceiverStream::new(receiver))
@@ -342,6 +428,11 @@ impl ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
+        log::warn!(
+            "http_error status={} code={}",
+            self.status.as_u16(),
+            self.code
+        );
         (self.status, Json(self.body())).into_response()
     }
 }
@@ -350,6 +441,13 @@ impl From<AppleAiError> for ApiError {
     fn from(error: AppleAiError) -> Self {
         let (status, code) = match &error {
             AppleAiError::ContextLengthExceeded(_) => {
+                (StatusCode::BAD_REQUEST, "context_length_exceeded")
+            }
+            // Older bridges return this context error as untyped text.
+            AppleAiError::Bridge(message)
+                if message
+                    .contains("The session's transcript exceeded the model's context size") =>
+            {
                 (StatusCode::BAD_REQUEST, "context_length_exceeded")
             }
             AppleAiError::InvalidMessages(_) | AppleAiError::InvalidOptions(_) => {
@@ -440,10 +538,9 @@ mod tests {
             json!({"messages":[]}),
             json!({"temperature": 2.1}),
             json!({"max_tokens":0}),
-            json!({"messages":[{"role":"assistant","content":"Hi"}]}),
+            json!({"messages":[{"role":"system","content":"Rule"}]}),
             json!({"messages":[{"role":"user","content":"Hi"},{"role":"system","content":"Rule"},{"role":"user","content":"Hi"}]}),
             json!({"messages":[{"role":"user","content":" "}]}),
-            json!({"messages":[{"role":"user","content":"Hi"},{"role":"user","content":"Again"}]}),
         ] {
             let mut input = valid.clone();
             for (key, value) in patch.as_object().expect("object patch") {
@@ -453,7 +550,48 @@ mod tests {
         }
         let mut tools = valid;
         tools["tools"] = json!([]);
+        assert!(request(tools.clone()).validate().is_ok());
+        tools["tool_choice"] = json!("none");
+        assert!(request(tools.clone()).validate().is_ok());
+        tools["tools"] = json!([{"type":"function","function":{"name":"read"}}]);
+        assert!(request(tools.clone()).validate().is_err());
+        tools["tools"] = json!([]);
+        for choice in [json!("auto"), json!("required"), json!({"type":"function"})] {
+            tools["tool_choice"] = choice;
+            assert!(request(tools.clone()).validate().is_err());
+        }
+        tools["tool_choice"] = json!("none");
+        tools["unknown_parameter"] = json!(true);
         assert!(serde_json::from_value::<ChatRequest>(tools).is_err());
+    }
+
+    #[test]
+    fn accepts_non_alternating_messages_and_assistant_continuations() {
+        for messages in [
+            json!([{"role":"user","content":"Hi"},{"role":"user","content":"Again"}]),
+            json!([{"role":"user","content":"Hi"},{"role":"assistant","content":"Hello"},{"role":"assistant","content":"More"},{"role":"user","content":"Continue"}]),
+            json!([{"role":"system","content":"Be brief"},{"role":"user","content":"Hi"},{"role":"assistant","content":"Hello"}]),
+            json!([{"role":"assistant","content":"Continue this answer"}]),
+        ] {
+            let input = json!({"model": MODEL, "messages": messages});
+            assert!(request(input.clone()).validate().is_ok(), "input {input}");
+        }
+    }
+
+    #[test]
+    fn accepts_opencode_reasoning_hint_without_enabling_tools() {
+        let mut input = json!({
+            "model": MODEL,
+            "messages": [{"role": "user", "content": "Bonjour"}],
+            "tools": [],
+            "tool_choice": "none"
+        });
+        for effort in [json!(null), json!("none"), json!("low"), json!("high")] {
+            input["reasoning_effort"] = effort;
+            assert!(request(input.clone()).validate().is_ok());
+        }
+        input["tools"] = json!([{"type":"function","function":{"name":"read"}}]);
+        assert!(request(input).validate().is_err());
     }
 
     #[tokio::test]
@@ -462,12 +600,18 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/v1/models")
+                    .header("x-request-id", "untrusted-client-id")
                     .body(Body::empty())
                     .expect("request"),
             )
             .await
             .expect("response");
         assert_eq!(response.status(), StatusCode::OK);
+        let request_id = response.headers()["x-request-id"]
+            .to_str()
+            .expect("request ID header");
+        uuid::Uuid::parse_str(request_id).expect("server-generated UUID");
+        assert_ne!(request_id, "untrusted-client-id");
         let bytes = to_bytes(response.into_body(), BODY_LIMIT)
             .await
             .expect("body");
@@ -494,6 +638,12 @@ mod tests {
                 .await
                 .expect("response");
             assert_eq!(response.status(), expected);
+            uuid::Uuid::parse_str(
+                response.headers()["x-request-id"]
+                    .to_str()
+                    .expect("error request ID"),
+            )
+            .expect("errors include server-generated request IDs");
             let bytes = to_bytes(response.into_body(), BODY_LIMIT)
                 .await
                 .expect("body");
@@ -595,6 +745,15 @@ mod tests {
         assert_eq!(
             ApiError::from(AppleAiError::ContextLengthExceeded("too long".into())).status,
             StatusCode::BAD_REQUEST
+        );
+        let legacy_context_error = ApiError::from(AppleAiError::Bridge(
+            "The session's transcript exceeded the model's context size.".into(),
+        ));
+        assert_eq!(legacy_context_error.status, StatusCode::BAD_REQUEST);
+        assert_eq!(legacy_context_error.code, "context_length_exceeded");
+        assert_eq!(
+            ApiError::from(AppleAiError::Bridge("other native error".into())).status,
+            StatusCode::INTERNAL_SERVER_ERROR
         );
         assert_eq!(
             ApiError::from(AppleAiError::NotEnabled).status,

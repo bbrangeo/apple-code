@@ -81,8 +81,8 @@ pub struct Args {
     #[arg(long)]
     pub no_color: bool,
 
-    /// Verbose output
-    #[arg(long)]
+    /// Verbose output, including HTTP server request logs (alias: --logs)
+    #[arg(long, alias = "logs", global = true)]
     pub verbose: bool,
 
     /// Debug mode
@@ -115,11 +115,22 @@ impl Args {
 #[cfg(test)]
 mod tests {
     use super::Args;
-    use clap::CommandFactory;
+    use clap::{CommandFactory, Parser};
 
     #[test]
     fn cli_options_are_valid() {
         Args::command().debug_assert();
+    }
+
+    #[test]
+    fn server_logs_enable_verbose_output() {
+        let args =
+            Args::try_parse_from(["apple-code", "serve", "--logs"]).expect("server accepts --logs");
+        assert!(args.verbose);
+        assert!(args.is_serving());
+        let args =
+            Args::try_parse_from(["apple-code", "serve"]).expect("server accepts default options");
+        assert!(!args.verbose);
     }
 }
 

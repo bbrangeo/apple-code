@@ -1,0 +1,48 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "default_agent": "apple-chat",
+  "model": "apple/apple-intelligence",
+  "compaction": {
+    "auto": true,
+    "keep": { "tokens": 768 },
+    "buffer": "25%"
+  },
+  "agents": {
+    "apple-chat": {
+      "description": "Minimal text-only Apple Intelligence test",
+      "mode": "primary",
+      "model": "apple/apple-intelligence",
+      "system": "Answer the user's message directly and briefly. Do not use tools.",
+
+      "permissions": [
+        { "action": "*", "resource": "*", "effect": "deny" }
+      ]
+    }
+  },
+  "policies": [
+    { "action": "integration.use", "resource": "plugin:oh-my-opencode-slim", "effect": "deny" },
+    { "action": "integration.use", "resource": "plugin:opencode-supermemory", "effect": "deny" },
+    { "action": "integration.use", "resource": "mcp:*", "effect": "deny" },
+    { "action": "integration.use", "resource": "skill:*", "effect": "deny" }
+  ],
+  "providers": {
+    "apple": {
+      "name": "Apple Intelligence local",
+      "package": "@opencode/ai/providers/openai-compatible",
+      "settings": { "baseURL": "http://127.0.0.1:8080/v1" },
+      "models": {
+        "apple-intelligence": {
+          "name": "Apple Intelligence",
+          "capabilities": { "tools": false, "input": ["text"], "output": ["text"] },
+          "limit": { "context": 4096, "input": 3000, "output": 64 },
+          "compatibility": {
+            "maxTokensField": "max_tokens",
+            "streamUsage": false,
+            "supportsPromptCacheKey": false
+          },
+          "body": { "tools": [], "tool_choice": "none", "max_tokens": 64 }
+        }
+      }
+    }
+  }
+}
