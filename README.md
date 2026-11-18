@@ -194,6 +194,9 @@ The server calls the Rust API of `apple_ai`; only that crate compiles and owns
 the native Swift bridge. Initial `system` messages become native instructions;
 `user`/`assistant` history uses a native transcript. Each request is independent.
 Consecutive messages of the same role are accepted and preserved in order.
+Assistant placeholders with `content: null` (or omitted content) and no tool
+calls are ignored before native generation. User and system messages still
+require non-empty text; tool-call fields and non-text content remain unsupported.
 Requests ending with an assistant message retain the history and use the native
 bridge's `Continue.` prompt. System messages must precede the conversation.
 No CLI code-generation instructions or mock fallback are applied to HTTP requests.

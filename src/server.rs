@@ -156,7 +156,7 @@ struct ChatRequest {
 #[serde(deny_unknown_fields)]
 struct Message {
     role: Role,
-    content: String,
+    content: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -193,7 +193,10 @@ impl ChatRequest {
         }
         let mut in_history = false;
         for message in &self.messages {
-            if message.content.trim().is_empty() {
+            if message.role == Role::Assistant && message.content.is_none() {
+                continue;
+            }
+            if message.content.as_deref().unwrap_or("").trim().is_empty() {
                 return Err(ApiError::invalid("Message content must not be empty"));
             }
             if message.role == Role::System {
@@ -242,12 +245,12 @@ async fn chat(
         .messages
         .iter()
         .filter(|message| message.role == Role::System)
-        .map(|message| message.content.len())
+        .map(|message| message.content.as_ref().map_or(0, String::len))
         .sum();
     let message_bytes: usize = request
         .messages
         .iter()
-        .map(|message| message.content.len())
+        .map(|message| message.content.as_ref().map_or(0, String::len))
         .sum();
     let roles: Vec<_> = request
         .messages
@@ -481,10 +484,13 @@ impl Generation {
         let messages = request
             .messages
             .into_iter()
-            .map(|message| match message.role {
-                Role::System => apple_ai::Message::system(message.content),
-                Role::User => apple_ai::Message::user(message.content),
-                Role::Assistant => apple_ai::Message::assistant(message.content),
+            .filter_map(|message| {
+                let content = message.content?;
+                Some(match message.role {
+                    Role::System => apple_ai::Message::system(content),
+                    Role::User => apple_ai::Message::user(content),
+                    Role::Assistant => apple_ai::Message::assistant(content),
+                })
             })
             .collect();
         let options = GenerationOptions::default()
@@ -563,6 +569,32 @@ mod tests {
         tools["tool_choice"] = json!("none");
         tools["unknown_parameter"] = json!(true);
         assert!(serde_json::from_value::<ChatRequest>(tools).is_err());
+    }
+
+    #[test]
+    fn accepts_null_assistant_placeholders_but_rejects_missing_text_and_tools() {
+        let mut input = json!({"model": MODEL, "messages": [
+            {"role":"user", "content":"Bonjour"},
+            {"role":"assistant", "content":null},
+            {"role":"user", "content":"Continue"}
+        ]});
+        assert!(request(input.clone()).validate().is_ok());
+        input["messages"][1]["tool_calls"] = json!([{ "id":"call_1", "type":"function" }]);
+        assert!(serde_json::from_value::<ChatRequest>(input).is_err());
+        for messages in [
+            json!([{"role":"assistant", "content":null}]),
+            json!([{"role":"user", "content":null}]),
+            json!([{"role":"system", "content":null}, {"role":"user", "content":"Hi"}]),
+            json!([{"role":"user", "content":"Hi"}, {"role":"assistant", "content":""}]),
+        ] {
+            assert!(request(json!({"model": MODEL, "messages": messages}))
+                .validate()
+                .is_err());
+        }
+        for content in [json!(42), json!([]), json!({})] {
+            let input = json!({"model": MODEL, "messages": [{"role":"user", "content":content}]});
+            assert!(serde_json::from_value::<ChatRequest>(input).is_err());
+        }
     }
 
     #[test]
@@ -670,7 +702,8 @@ mod tests {
         for streaming in [false, true] {
             let body = json!({"model": MODEL, "messages": [
                 {"role": "system", "content": "Reply briefly in French."},
-                {"role": "user", "content": "Say hello."}
+                {"role": "user", "content": "Say hello."},
+                {"role": "assistant", "content": null}
             ], "stream": streaming, "max_tokens": 64});
             let response = time::timeout(
                 Duration::from_secs(60),
