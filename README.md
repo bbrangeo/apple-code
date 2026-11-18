@@ -63,9 +63,8 @@ In tool mode, omit `-l` for text tasks such as summaries; the configured default
 language is only applied outside tool mode. Use `-l python` (or another language)
 when generating code.
 
-The on-device model has a limited context window. The `apple_ai` 0.1.1 bridge
-also duplicates the current prompt in its transcript and can expose model errors
-as JSON parsing errors. If a large diff fails, reduce `--char-limit` and
+The on-device model has a limited context window, including instructions and
+conversation history. If a large diff fails, reduce `--char-limit` and
 `--max-tokens`. These are input/output caps, not a guarantee that a request fits.
 `--char-limit` truncates the input: a summary then covers only that portion of
 the diff. For a full review, process smaller diffs separately.
@@ -152,6 +151,80 @@ cargo run -- config --reset
 cargo run -- models
 cargo run -- languages
 cargo run -- test
+```
+
+## OpenAI-compatible server
+
+```bash
+apple-code serve                            # 127.0.0.1:11434
+apple-code serve --port 8080 --host 0.0.0.0  # trusted networks only
+```
+
+| Method | Path | Description |
+| --- | --- | --- |
+| GET | `/health` | Native model availability; 503 if unavailable |
+| GET | `/v1/models` | Lists `apple-intelligence` |
+| POST | `/v1/chat/completions` | Text chat, JSON or streaming SSE |
+
+```bash
+curl http://localhost:11434/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"apple-intelligence","messages":[{"role":"system","content":"Be concise."},{"role":"user","content":"Explain Rust ownership."}],"max_tokens":512}'
+
+curl -N http://localhost:11434/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"apple-intelligence","messages":[{"role":"user","content":"Count to 5."}],"stream":true}'
+```
+
+```typescript
+import OpenAI from "openai";
+const client = new OpenAI({
+  baseURL: "http://localhost:11434/v1",
+  apiKey: "not-needed",
+});
+const response = await client.chat.completions.create({
+  model: "apple-intelligence",
+  messages: [{ role: "user", content: "Summarize the history of computing." }],
+});
+console.log(response.choices[0]?.message.content);
+```
+
+The server calls the Rust API of `apple_ai`; only that crate compiles and owns
+the native Swift bridge. Initial `system` messages become native instructions;
+`user`/`assistant` history uses a native transcript. Each request is independent
+and must end with a user message, with alternating user/assistant turns after
+initial system messages. No CLI code-generation instructions or mock fallback
+are applied to HTTP requests.
+
+Both HTTP response modes use the native text stream, buffered for non-streaming
+responses. SSE sends role/content/stop chunks and `[DONE]` on success. Native
+errors before the first delta produce an HTTP error; later failures produce an
+SSE error event and close the stream without pretending success. Token usage is
+omitted because this integration does not expose reliable tokenizer counts.
+
+Supported options: `temperature` (0–2), `max_tokens` (1–8192, default 512;
+`max_completion_tokens` is an alias), and `stream`. Tools, images, structured
+output and unknown fields are rejected explicitly. Requests are limited to
+256 KiB/256 messages and 120 seconds, with one active request (429 when busy).
+Disconnecting the SSE client drops the native stream; cancellation is cooperative
+at the next delta, not an immediate interruption of SDK inference.
+
+**Security:** no authentication, TLS or CORS is configured. Loopback is the
+default. Do not expose `0.0.0.0` on an untrusted network without an authenticated
+TLS reverse proxy. Prompts are not logged normally; avoid debug logging with
+sensitive content.
+
+**Pinned dependency:** this checkout uses `apple_ai` 0.2.0 from its Git repository,
+pinned to a tested commit in `Cargo.toml`. Cargo downloads it automatically; no
+nested clone is required. The optional local `apple_ai/` checkout is ignored by
+Git and excluded from the package. Publish the crate version on crates.io before
+publishing/installing this updated application from crates.io.
+The `server` feature is enabled by default; `--no-default-features` omits it.
+
+Run the model-backed endpoint smoke test with:
+
+```bash
+cargo test --all-features native_backend_serves_health_json_and_sse -- --ignored
 ```
 
 ## Features

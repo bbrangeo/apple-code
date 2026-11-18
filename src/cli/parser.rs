@@ -105,6 +105,13 @@ pub struct Args {
     pub subcommand: Option<Subcommand>,
 }
 
+impl Args {
+    /// Whether this invocation starts the HTTP server.
+    pub fn is_serving(&self) -> bool {
+        matches!(self.subcommand, Some(Subcommand::Serve { .. }))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::Args;
@@ -132,6 +139,15 @@ pub enum Subcommand {
         /// Reset configuration to defaults
         #[arg(long)]
         reset: bool,
+    },
+    /// Start an OpenAI-compatible HTTP server (requires the server feature)
+    Serve {
+        /// Bind address; non-loopback addresses expose the unauthenticated API
+        #[arg(long, default_value = "127.0.0.1")]
+        host: std::net::IpAddr,
+        /// TCP port
+        #[arg(long, default_value_t = 11434, value_parser = clap::value_parser!(u16).range(1..))]
+        port: u16,
     },
     /// List available Apple Foundation Models
     Models,

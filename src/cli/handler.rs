@@ -40,6 +40,15 @@ impl Handler {
                         *reset,
                     );
                 }
+                Subcommand::Serve { host, port } => {
+                    #[cfg(feature = "server")]
+                    return crate::server::run(std::net::SocketAddr::new(*host, *port));
+                    #[cfg(not(feature = "server"))]
+                    {
+                        let _ = (host, port);
+                        anyhow::bail!("Rebuild with --features server to use apple-code serve");
+                    }
+                }
                 Subcommand::Models => {
                     println!("Available models:");
                     println!("  apple-foundation-model (on-device, when available)");

@@ -19,6 +19,7 @@ exclude = [
     ".apple-code-history",
     ".cursor*",
     "terminals",
+    "apple_ai",
 ]
 
 [[bin]]
@@ -43,12 +44,18 @@ arboard = "3"
 syntect = "5"
 ctrlc = "3"
 tokio = { version = "1", features = ["rt", "macros"], optional = true }
-apple_ai = { version = "0.1.1", optional = true }
+axum = { version = "0.8", optional = true }
+tokio-stream = { version = "0.1", optional = true }
+apple_ai = { version = "0.2.0", git = "https://github.com/bbrangeo/apple_ai.git", rev = "e726e424204fde612ab052b4ad94448f99d1bf7e", optional = true }
 glob = "0.3"
 
 [features]
-default = ["apple_ai"]
+default = ["apple_ai", "server"]
 apple_ai = ["dep:apple_ai", "dep:tokio"]
+server = ["apple_ai", "apple_ai/stream", "dep:axum", "dep:tokio-stream", "tokio/rt-multi-thread", "tokio/net", "tokio/signal", "tokio/sync", "tokio/time"]
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
 
 [badges]
 maintenance = { status = "experimental" }

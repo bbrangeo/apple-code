@@ -6,6 +6,8 @@ mod cli;
 pub mod config;
 mod conversation;
 mod error;
+#[cfg(feature = "server")]
+mod server;
 mod types;
 mod ui;
 pub mod utils;

@@ -9,11 +9,13 @@ use apple_code_assistant::utils;
 use apple_code_assistant::{Args, Handler};
 
 fn main() -> Result<()> {
-    ctrlc::set_handler(|| {
-        eprintln!("\nOperation cancelled by user");
-        std::process::exit(130);
-    })?;
     let args = Args::parse();
+    if !args.is_serving() {
+        ctrlc::set_handler(|| {
+            eprintln!("\nOperation cancelled by user");
+            std::process::exit(130);
+        })?;
+    }
     utils::setup_logging(args.verbose, args.debug);
     let config = Config::load(args.config.as_deref()).map_err(|e| anyhow::anyhow!("{}", e))?;
     let handler = Handler::new();

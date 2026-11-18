@@ -24,7 +24,6 @@ impl AppleAiCodeGenClient {
 
 impl CodeGenClient for AppleAiCodeGenClient {
     fn generate(&self, request: &GenerateRequest) -> Result<GenerateResponse, ApiError> {
-        // apple_ai 0.1.1 ignores system messages in basic generation mode.
         let messages = vec![Message::user(build_prompt(request))];
 
         let options = GenerationOptions {
@@ -81,9 +80,7 @@ fn map_apple_error(e: AppleAiError) -> ApiError {
         }
         AppleAiError::Bridge(msg) => ApiError::Request(msg),
         AppleAiError::Json(error) => ApiError::Request(format!(
-            "Invalid JSON response from the Apple AI bridge: {error}. \
-             The bridge can hide model errors, including context overflow. \
-             For large inputs, try --char-limit 2000 --max-tokens 512."
+            "Invalid JSON response from the Apple AI bridge: {error}."
         )),
         _ => ApiError::Request(e.to_string()),
     }
