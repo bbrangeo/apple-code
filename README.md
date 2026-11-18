@@ -233,11 +233,12 @@ default. Do not expose `0.0.0.0` on an untrusted network without an authenticate
 TLS reverse proxy. Prompts are not logged normally; avoid debug logging with
 sensitive content.
 
-**Pinned dependency:** this checkout uses `apple_ai` 0.2.0 from its Git repository,
-pinned to a tested commit in `Cargo.toml`. Cargo downloads it automatically; no
-nested clone is required. The optional local `apple_ai/` checkout is ignored by
-Git and excluded from the package. Publish the crate version on crates.io before
-publishing/installing this updated application from crates.io.
+**Registry dependency:** this checkout uses [`apple_ai` 0.2.0](https://crates.io/crates/apple_ai/0.2.0)
+from crates.io. Cargo downloads it automatically; no Git dependency or nested
+clone is required. The optional local `apple_ai/` checkout is ignored by Git and
+excluded from the package. The server changes described here are available from
+this source checkout; updating the dependency does not publish a new version of
+`apple-code-assistant`.
 The `server` feature is enabled by default; `--no-default-features` omits it.
 
 Run the model-backed endpoint smoke test with:
