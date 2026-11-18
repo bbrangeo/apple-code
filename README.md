@@ -236,9 +236,10 @@ sensitive content.
 **Registry dependency:** this checkout uses [`apple_ai` 0.2.0](https://crates.io/crates/apple_ai/0.2.0)
 from crates.io. Cargo downloads it automatically; no Git dependency or nested
 clone is required. The optional local `apple_ai/` checkout is ignored by Git and
-excluded from the package. The server changes described here are available from
-this source checkout; updating the dependency does not publish a new version of
-`apple-code-assistant`.
+excluded from the package. The server compatibility fixes and request logs
+described here are included in `apple-code-assistant` 0.1.4. Updating `apple_ai`
+alone does not update an installed `apple-code` binary; reinstall or upgrade
+`apple-code-assistant` to get these changes.
 The `server` feature is enabled by default; `--no-default-features` omits it.
 
 Run the model-backed endpoint smoke test with:
